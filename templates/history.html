@@ -1,0 +1,798 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Lịch sử - Hệ thống Phân loại Rác</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🗑️ Hệ thống Phân loại Rác Thải</h1>
+                <nav>
+                    <a href="/" class="nav-link">Dashboard</a>
+                    <a href="/history" class="nav-link active">Lịch sử</a>
+                </nav>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Filters -->
+            <div class="card filter-card">
+                <h2>🔍 Bộ lọc</h2>
+                <div class="filter-group">
+                    <div class="filter-item">
+                        <label>Loại rác:</label>
+                        <select id="filter-label">
+                            <option value="">Tất cả</option>
+                            <option value="plastic_bottle">Chai nhựa</option>
+                            <option value="plastic_bag">Túi nhựa</option>
+                            <option value="plastic_cup">Cốc nhựa</option>
+                            <option value="paper">Giấy</option>
+                            <option value="metal">Kim loại</option>
+                            <option value="glass">Thủy tinh</option>
+                            <option value="cardboard">Bìa các tông</option>
+                        </select>
+                    </div>
+                    <div class="filter-item">
+                        <label>Độ tin cậy tối thiểu:</label>
+                        <input type="range" id="filter-confidence" min="0" max="100" value="0" step="5">
+                        <span id="confidence-value">0%</span>
+                    </div>
+                    <div class="filter-item">
+                        <label>Có nước:</label>
+                        <select id="filter-liquid">
+                            <option value="">Tất cả</option>
+                            <option value="yes">Có</option>
+                            <option value="no">Không</option>
+                        </select>
+                    </div>
+                    <button id="apply-filter-btn" class="btn btn-primary">Áp dụng</button>
+                    <button id="reset-filter-btn" class="btn btn-secondary">Đặt lại</button>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(500px, 1fr)); gap: 25px; margin-bottom: 25px;">
+                <!-- Chart 1: Trash Distribution -->
+                <div class="card">
+                    <h2>📊 Phân bố loại rác (Top 10)</h2>
+                    <div style="position: relative; height: 300px;">
+                        <canvas id="trashTypeChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Chart 2: All 38 Types -->
+                <div class="card">
+                    <h2>📋 Chi tiết 38 loại rác</h2>
+                    <div style="position: relative; height: 300px;">
+                        <canvas id="allTypesChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Data Table -->
+            <div class="card records-card">
+                <h2>📋 Chi tiết bản ghi</h2>
+                
+                <div class="records-table">
+                    <div class="table-header">
+                        <div>STT</div>
+                        <div>Thời gian</div>
+                        <div>Hình ảnh</div>
+                        <div>Nhãn AI</div>
+                        <div>Cân nặng</div>
+                        <div>Mã kết quả</div>
+                        <div>Ghi chú</div>
+                    </div>
+                    <div id="records-list">
+                        <div class="table-row">
+                            <div colspan="7" style="text-align: center; color: var(--text-secondary); padding: 40px 0;">
+                                <div class="spinner" style="display: inline-block;"></div>
+                                <p style="margin-top: 10px;">Đang tải dữ liệu...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pagination -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
+                    <div class="pagination" id="pagination">
+                        <!-- Will be filled by JavaScript -->
+                    </div>
+                    <div class="pagination-info" id="pagination-info">
+                        Đang tải...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistics Summary -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 25px;">
+                <div class="card">
+                    <h2>💧 Thống kê nước</h2>
+                    <div class="stat-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">Có nước</div>
+                            <div class="stat-value" id="stat-has-liquid">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Không nước</div>
+                            <div class="stat-value" id="stat-no-liquid">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>⚡ Tổng quan</h2>
+                    <div class="info-box">
+                        <p><strong>Tổng bản ghi:</strong> <span id="total-all">0</span></p>
+                        <p><strong>Độ chính xác TB:</strong> <span id="avg-conf-all">0%</span></p>
+                        <p><strong>Loại rác phát hiện:</strong> <span id="label-count-all">0</span></p>
+                        <p class="text-muted" style="font-size: 0.85em; margin-top: 10px;">
+                            Lần cập nhật: <span id="update-time">-</span>
+                        </p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>📈 Mã kết quả</h2>
+                    <div class="info-box">
+                        <p style="font-size: 0.85em; margin: 5px 0;"><strong>1:</strong> 🟢 Có nước</p>
+                        <p style="font-size: 0.85em; margin: 5px 0;"><strong>2:</strong> 🟡 Không nước</p>
+                        <p style="font-size: 0.85em; margin: 5px 0;"><strong>3:</strong> 🔴 Lỗi</p>
+                        <p style="font-size: 0.85em; margin: 5px 0;"><strong>4:</strong> 🔵 Loại khác</p>
+                        <p style="font-size: 0.85em; margin: 5px 0;"><strong>5:</strong> ⚫ Không detect</p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>&copy; 2024 Hệ thống Phân loại Rác Thải | Kết nối: <span id="ws-indicator">Chưa kết nối</span></p>
+        </footer>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        const WS_URL = 'ws://localhost:8000/ws';
+        
+        let currentPage = 1;
+        let totalPages = 1;
+        const recordsPerPage = 20;
+        let websocket = null;
+        let trashTypeChart = null;
+        let allTypesChart = null;
+
+        // ===== WEBSOCKET =====
+        function initWebSocket() {
+            try {
+                websocket = new WebSocket(WS_URL);
+                
+                websocket.onopen = () => {
+                    console.log('WebSocket connected');
+                    document.getElementById('ws-indicator').textContent = '✓ Kết nối thành công';
+                };
+                
+                websocket.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        if (message.type === 'classification_result') {
+                            loadRecords(currentPage);
+                            loadDetailStats();
+                        }
+                    } catch (e) {
+                        console.error('Error parsing WebSocket message:', e);
+                    }
+                };
+                
+                websocket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    document.getElementById('ws-indicator').textContent = '✗ Lỗi kết nối';
+                };
+                
+                websocket.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    document.getElementById('ws-indicator').textContent = '✗ Ngắt kết nối';
+                    setTimeout(initWebSocket, 3000);
+                };
+            } catch (error) {
+                console.error('WebSocket init error:', error);
+            }
+        }
+
+        // ===== API CALLS =====
+        async function loadRecords(page = 1) {
+            try {
+                const response = await fetch(`${API_BASE}/api/records?page=${page}&limit=${recordsPerPage}`);
+                const data = await response.json();
+                
+                currentPage = data.page;
+                totalPages = data.pages;
+                
+                const recordsHtml = data.records.length > 0 
+                    ? data.records.map((record, idx) => {
+                        const liquidNote = record.has_liquid === 'yes' ? '💧 Có chất lỏng' : 
+                                          record.has_liquid === 'no' ? '🟡 Không nước' : '-';
+                        const outputCode = determineOutputCode(record.label, record.has_liquid, record.weight_grams);
+                        return `
+                            <div class="table-row">
+                                <div>${(currentPage - 1) * recordsPerPage + idx + 1}</div>
+                                <div style="font-size: 0.85em;">${new Date(record.timestamp).toLocaleString('vi-VN')}</div>
+                                <div style="text-align: center;">
+                                    <a href="#" class="image-link" title="View image">📷</a>
+                                </div>
+                                <div>
+                                    <span class="badge badge-${getLabelClass(record.label)}">
+                                        ${formatLabel(record.label)}
+                                    </span>
+                                </div>
+                                <div style="text-align: center;">${record.weight_grams || '-'} g</div>
+                                <div style="text-align: center; font-weight: 600; color: var(--primary-color);">
+                                    ${outputCode}
+                                </div>
+                                <div style="font-size: 0.85em;">${liquidNote}</div>
+                            </div>
+                        `;
+                    }).join('')
+                    : '<div class="table-row"><div colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px 0;">Không có dữ liệu</div></div>';
+                
+                document.getElementById('records-list').innerHTML = recordsHtml;
+                updatePagination(data.page, data.pages, data.total);
+            } catch (error) {
+                console.error('Error loading records:', error);
+                document.getElementById('records-list').innerHTML = 
+                    '<div class="table-row"><div colspan="7" style="text-align: center; color: #ef4444;">Lỗi tải dữ liệu</div></div>';
+            }
+        }
+
+        async function loadDetailStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/stats`);
+                const data = await response.json();
+                
+                // Update summary
+                document.getElementById('total-all').textContent = data.total_records;
+                document.getElementById('avg-conf-all').textContent = 
+                    (data.average_confidence * 100).toFixed(1) + '%';
+                document.getElementById('label-count-all').textContent = 
+                    Object.keys(data.total_by_label).length;
+                
+                // Update charts
+                updateTrashTypeChart(data.total_by_label);
+                updateAllTypesChart(data.total_by_label);
+                
+                // Update time
+                document.getElementById('update-time').textContent = 
+                    new Date().toLocaleTimeString('vi-VN');
+            } catch (error) {
+                console.error('Error loading detail stats:', error);
+            }
+        }
+
+        function updateTrashTypeChart(data) {
+            const ctx = document.getElementById('trashTypeChart').getContext('2d');
+            const topData = Object.entries(data)
+                .sort((a, b) => b[1] - a[1])
+                .slice(0, 10);
+            
+            const labels = topData.map(([label]) => formatLabel(label));
+            const values = topData.map(([_, count]) => count);
+            
+            if (trashTypeChart) {
+                trashTypeChart.data.labels = labels;
+                trashTypeChart.data.datasets[0].data = values;
+                trashTypeChart.update();
+            } else {
+                trashTypeChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Số lượng',
+                            data: values,
+                            backgroundColor: '#4ECDC4',
+                            borderColor: '#2d9f95',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        indexAxis: 'y',
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            x: { beginAtZero: true }
+                        }
+                    }
+                });
+            }
+        }
+
+        function updateAllTypesChart(data) {
+            const ctx = document.getElementById('allTypesChart').getContext('2d');
+            const allData = Object.entries(data)
+                .sort((a, b) => b[1] - a[1]);
+            
+            const labels = allData.map(([label]) => formatLabel(label));
+            const values = allData.map(([_, count]) => count);
+            
+            // Generate distinct colors
+            const colors = labels.map((_, idx) => {
+                const hue = (idx * 360 / labels.length) % 360;
+                return `hsl(${hue}, 70%, 60%)`;
+            });
+            
+            if (allTypesChart) {
+                allTypesChart.data.labels = labels;
+                allTypesChart.data.datasets[0].data = values;
+                allTypesChart.data.datasets[0].backgroundColor = colors;
+                allTypesChart.update();
+            } else {
+                allTypesChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Số lượng',
+                            data: values,
+                            backgroundColor: colors
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        indexAxis: 'y',
+                        plugins: {
+                            legend: { display: false }
+                        },
+                        scales: {
+                            x: { beginAtZero: true }
+                        }
+                    }
+                });
+            }
+        }
+
+        function updatePagination(page, pages, total) {
+            const paginationHTML = [];
+            
+            if (page > 1) {
+                paginationHTML.push(`<a href="#" onclick="window.goToPage(1); return false;" class="page-btn">« First</a>`);
+                paginationHTML.push(`<a href="#" onclick="window.goToPage(${page - 1}); return false;" class="page-btn">‹ Prev</a>`);
+            }
+            
+            for (let i = Math.max(1, page - 2); i <= Math.min(pages, page + 2); i++) {
+                paginationHTML.push(`
+                    <a href="#" onclick="window.goToPage(${i}); return false;" class="page-btn ${i === page ? 'active' : ''}">
+                        ${i}
+                    </a>
+                `);
+            }
+            
+            if (page < pages) {
+                paginationHTML.push(`<a href="#" onclick="window.goToPage(${page + 1}); return false;" class="page-btn">Next ›</a>`);
+                paginationHTML.push(`<a href="#" onclick="window.goToPage(${pages}); return false;" class="page-btn">Last »</a>`);
+            }
+            
+            document.getElementById('pagination').innerHTML = paginationHTML.join('');
+            document.getElementById('pagination-info').textContent = 
+                `Trang ${page} / ${pages} | Tổng: ${total} bản ghi`;
+        }
+
+        window.goToPage = function(page) {
+            currentPage = page;
+            loadRecords(page);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        };
+
+        function formatLabel(label) {
+            return label
+                .replace(/_/g, ' ')
+                .split(' ')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+        }
+
+        function getLabelClass(label) {
+            if (label.includes('plastic')) return 'plastic';
+            if (label.includes('paper')) return 'paper';
+            if (label.includes('metal') || label.includes('can')) return 'metal';
+            if (label.includes('glass')) return 'glass';
+            if (label.includes('cardboard')) return 'cardboard';
+            return 'unknown';
+        }
+
+        function determineOutputCode(label, hasLiquid, weight) {
+            if (label === 'no_detection') return 5;
+            if (label === 'error') return 3;
+            if (hasLiquid === 'yes') return 1;
+            if (hasLiquid === 'no') return 2;
+            return 4;
+        }
+
+        // ===== EVENT LISTENERS =====
+        document.getElementById('filter-confidence').addEventListener('input', (e) => {
+            document.getElementById('confidence-value').textContent = e.target.value + '%';
+        });
+
+        document.getElementById('apply-filter-btn').addEventListener('click', () => {
+            console.log('Filters applied');
+            currentPage = 1;
+            loadRecords(1);
+        });
+
+        document.getElementById('reset-filter-btn').addEventListener('click', () => {
+            document.getElementById('filter-label').value = '';
+            document.getElementById('filter-confidence').value = '0';
+            document.getElementById('filter-liquid').value = '';
+            document.getElementById('confidence-value').textContent = '0%';
+            currentPage = 1;
+            loadRecords(1);
+        });
+
+        // ===== INITIALIZATION =====
+        document.addEventListener('DOMContentLoaded', () => {
+            initWebSocket();
+            loadRecords(1);
+            loadDetailStats();
+            
+            // Auto-refresh every 15 seconds
+            setInterval(() => {
+                loadRecords(currentPage);
+                loadDetailStats();
+            }, 15000);
+        });
+    </script>
+</body>
+</html>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="header-content">
+                <h1>🗑️ Hệ thống Phân loại Rác Thải</h1>
+                <nav>
+                    <a href="/" class="nav-link">Dashboard</a>
+                    <a href="/history" class="nav-link active">Lịch sử</a>
+                </nav>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Filters -->
+            <div class="card filter-card">
+                <h2>🔍 Bộ lọc</h2>
+                <div class="filter-group">
+                    <div class="filter-item">
+                        <label>Loại rác:</label>
+                        <select id="filter-label">
+                            <option value="">Tất cả</option>
+                            <option value="plastic_bottle">Chai nhựa</option>
+                            <option value="plastic_bag">Túi nhựa</option>
+                            <option value="plastic_cup">Cốc nhựa</option>
+                            <option value="paper">Giấy</option>
+                            <option value="metal">Kim loại</option>
+                            <option value="glass">Thủy tinh</option>
+                            <option value="cardboard">Bìa các tông</option>
+                        </select>
+                    </div>
+                    <div class="filter-item">
+                        <label>Độ tin cậy tối thiểu:</label>
+                        <input type="range" id="filter-confidence" min="0" max="100" value="0" step="5">
+                        <span id="confidence-value">0%</span>
+                    </div>
+                    <div class="filter-item">
+                        <label>Có nước:</label>
+                        <select id="filter-liquid">
+                            <option value="">Tất cả</option>
+                            <option value="yes">Có</option>
+                            <option value="no">Không</option>
+                        </select>
+                    </div>
+                    <button id="apply-filter-btn" class="btn btn-primary">Áp dụng</button>
+                    <button id="reset-filter-btn" class="btn btn-secondary">Đặt lại</button>
+                </div>
+            </div>
+
+            <!-- Records Table -->
+            <div class="card records-card">
+                <h2>📋 Chi tiết bản ghi</h2>
+                
+                <div class="records-table">
+                    <div class="table-header">
+                        <div>ID</div>
+                        <div>Loại rác</div>
+                        <div>Độ tin cậy</div>
+                        <div>Có nước?</div>
+                        <div>Trọng lượng</div>
+                        <div>Thời gian</div>
+                    </div>
+                    <div id="records-list">
+                        <div class="table-row">
+                            <div colspan="6" style="text-align: center; color: var(--text-secondary); padding: 40px 0;">
+                                <div class="spinner" style="display: inline-block;"></div>
+                                <p style="margin-top: 10px;">Đang tải dữ liệu...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pagination -->
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 20px;">
+                    <div class="pagination" id="pagination">
+                        <!-- Will be filled by JavaScript -->
+                    </div>
+                    <div class="pagination-info" id="pagination-info">
+                        Đang tải...
+                    </div>
+                </div>
+            </div>
+
+            <!-- Statistics -->
+            <div class="card">
+                <h2>📊 Thống kê chi tiết</h2>
+                <div class="stat-grid" id="detail-stats" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 20px;">
+                    <div style="text-align: center; grid-column: 1/-1; color: var(--text-secondary);">
+                        <div class="spinner" style="display: inline-block;"></div>
+                        <p style="margin-top: 10px;">Đang tải thống kê...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Export Stats -->
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 25px;">
+                <div class="card">
+                    <h2>💧 Thống kê nước</h2>
+                    <div class="stat-grid">
+                        <div class="stat-item">
+                            <div class="stat-label">Có nước</div>
+                            <div class="stat-value" id="stat-has-liquid">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">Không nước</div>
+                            <div class="stat-value" id="stat-no-liquid">0</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>⚡ Tổng quan</h2>
+                    <div class="info-box">
+                        <p><strong>Tổng bản ghi:</strong> <span id="total-all">0</span></p>
+                        <p><strong>Độ chính xác TB:</strong> <span id="avg-conf-all">0%</span></p>
+                        <p><strong>Loại rác phát hiện:</strong> <span id="label-count-all">0</span></p>
+                        <p class="text-muted" style="font-size: 0.85em; margin-top: 10px;">
+                            Lần cập nhật: <span id="update-time">-</span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>&copy; 2024 Hệ thống Phân loại Rác Thải | Kết nối: <span id="ws-indicator">Chưa kết nối</span></p>
+        </footer>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        const WS_URL = 'ws://localhost:8000/ws';
+        
+        let currentPage = 1;
+        let totalPages = 1;
+        const recordsPerPage = 20;
+        let websocket = null;
+
+        // ===== WEBSOCKET =====
+        function initWebSocket() {
+            try {
+                websocket = new WebSocket(WS_URL);
+                
+                websocket.onopen = () => {
+                    console.log('WebSocket connected');
+                    document.getElementById('ws-indicator').textContent = '✓ Kết nối thành công';
+                };
+                
+                websocket.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        if (message.type === 'classification_result') {
+                            loadRecords(currentPage);
+                            loadDetailStats();
+                        }
+                    } catch (e) {
+                        console.error('Error parsing WebSocket message:', e);
+                    }
+                };
+                
+                websocket.onerror = (error) => {
+                    console.error('WebSocket error:', error);
+                    document.getElementById('ws-indicator').textContent = '✗ Lỗi kết nối';
+                };
+                
+                websocket.onclose = () => {
+                    console.log('WebSocket disconnected');
+                    document.getElementById('ws-indicator').textContent = '✗ Ngắt kết nối';
+                    setTimeout(initWebSocket, 3000);
+                };
+            } catch (error) {
+                console.error('WebSocket init error:', error);
+            }
+        }
+
+        // ===== API CALLS =====
+        async function loadRecords(page = 1) {
+            try {
+                const response = await fetch(`${API_BASE}/api/records?page=${page}&limit=${recordsPerPage}`);
+                const data = await response.json();
+                
+                currentPage = data.page;
+                totalPages = data.pages;
+                
+                const recordsHtml = data.records.length > 0 
+                    ? data.records.map(record => `
+                        <div class="table-row">
+                            <div>#${record.id}</div>
+                            <div>
+                                <span class="badge badge-${getLabelClass(record.label)}">
+                                    ${formatLabel(record.label)}
+                                </span>
+                            </div>
+                            <div style="text-align: center; font-weight: 600; color: var(--primary-color);">
+                                ${record.confidence}
+                            </div>
+                            <div style="text-align: center;">
+                                <span style="padding: 5px 10px; border-radius: 4px; 
+                                    ${record.has_liquid === 'yes' ? 'background: #D1FAE5; color: #10B981;' : 'background: #FEE2E2; color: #EF4444;'}">
+                                    ${record.has_liquid === 'yes' ? 'Có' : 'Không'}
+                                </span>
+                            </div>
+                            <div style="text-align: center;">${record.weight_grams || '-'} g</div>
+                            <div style="font-size: 0.85em; color: var(--text-muted);">
+                                ${new Date(record.timestamp).toLocaleString('vi-VN')}
+                            </div>
+                        </div>
+                    `).join('')
+                    : '<div class="table-row"><div colspan="6" style="text-align: center; color: var(--text-muted); padding: 20px 0;">Không có dữ liệu</div></div>';
+                
+                document.getElementById('records-list').innerHTML = recordsHtml;
+                updatePagination(data.page, data.pages, data.total);
+            } catch (error) {
+                console.error('Error loading records:', error);
+                document.getElementById('records-list').innerHTML = 
+                    '<div class="table-row"><div colspan="6" style="text-align: center; color: #ef4444;">Lỗi tải dữ liệu</div></div>';
+            }
+        }
+
+        async function loadDetailStats() {
+            try {
+                const response = await fetch(`${API_BASE}/api/stats`);
+                const data = response.json();
+                
+                // Update summary
+                document.getElementById('total-all').textContent = data.total_records;
+                document.getElementById('avg-conf-all').textContent = 
+                    (data.average_confidence * 100).toFixed(1) + '%';
+                document.getElementById('label-count-all').textContent = 
+                    Object.keys(data.total_by_label).length;
+                
+                // Update detail stats
+                const topLabels = Object.entries(data.total_by_label)
+                    .sort((a, b) => b[1] - a[1])
+                    .slice(0, 8);
+                
+                const statsHtml = topLabels.map(([label, count]) => `
+                    <div class="stat-item">
+                        <div class="stat-label">${formatLabel(label)}</div>
+                        <div class="stat-value">${count}</div>
+                        <div style="font-size: 0.8em; color: var(--text-muted); margin-top: 5px;">
+                            ${((count / data.total_records) * 100).toFixed(1)}%
+                        </div>
+                    </div>
+                `).join('');
+                
+                document.getElementById('detail-stats').innerHTML = statsHtml || 
+                    '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted);">Chưa có dữ liệu</div>';
+                
+                // Update time
+                document.getElementById('update-time').textContent = 
+                    new Date().toLocaleTimeString('vi-VN');
+            } catch (error) {
+                console.error('Error loading detail stats:', error);
+            }
+        }
+
+        function updatePagination(page, pages, total) {
+            const paginationHTML = [];
+            
+            if (page > 1) {
+                paginationHTML.push(`<a href="#" onclick="goToPage(1)" class="page-btn">« First</a>`);
+                paginationHTML.push(`<a href="#" onclick="goToPage(${page - 1})" class="page-btn">‹ Prev</a>`);
+            }
+            
+            for (let i = Math.max(1, page - 2); i <= Math.min(pages, page + 2); i++) {
+                paginationHTML.push(`
+                    <a href="#" onclick="goToPage(${i})" class="page-btn ${i === page ? 'active' : ''}">
+                        ${i}
+                    </a>
+                `);
+            }
+            
+            if (page < pages) {
+                paginationHTML.push(`<a href="#" onclick="goToPage(${page + 1})" class="page-btn">Next ›</a>`);
+                paginationHTML.push(`<a href="#" onclick="goToPage(${pages})" class="page-btn">Last »</a>`);
+            }
+            
+            document.getElementById('pagination').innerHTML = paginationHTML.join('');
+            document.getElementById('pagination-info').textContent = 
+                `Trang ${page} / ${pages} | Tổng: ${total} bản ghi`;
+        }
+
+        function goToPage(page) {
+            event.preventDefault();
+            currentPage = page;
+            loadRecords(page);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function formatLabel(label) {
+            return label
+                .replace(/_/g, ' ')
+                .split(' ')
+                .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+                .join(' ');
+        }
+
+        function getLabelClass(label) {
+            if (label.includes('plastic')) return 'plastic';
+            if (label.includes('paper')) return 'paper';
+            if (label.includes('metal') || label.includes('can')) return 'metal';
+            if (label.includes('glass')) return 'glass';
+            if (label.includes('cardboard')) return 'cardboard';
+            return 'unknown';
+        }
+
+        // ===== EVENT LISTENERS =====
+        document.getElementById('filter-confidence').addEventListener('input', (e) => {
+            document.getElementById('confidence-value').textContent = e.target.value + '%';
+        });
+
+        document.getElementById('apply-filter-btn').addEventListener('click', () => {
+            console.log('Filters applied');
+            currentPage = 1;
+            loadRecords(1);
+        });
+
+        document.getElementById('reset-filter-btn').addEventListener('click', () => {
+            document.getElementById('filter-label').value = '';
+            document.getElementById('filter-confidence').value = '0';
+            document.getElementById('filter-liquid').value = '';
+            document.getElementById('confidence-value').textContent = '0%';
+            currentPage = 1;
+            loadRecords(1);
+        });
+
+        // ===== INITIALIZATION =====
+        document.addEventListener('DOMContentLoaded', () => {
+            initWebSocket();
+            loadRecords(1);
+            loadDetailStats();
+            
+            // Auto-refresh every 15 seconds
+            setInterval(() => {
+                loadRecords(currentPage);
+                loadDetailStats();
+            }, 15000);
+        });
+    </script>
+</body>
+</html>
