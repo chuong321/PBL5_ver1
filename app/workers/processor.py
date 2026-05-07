@@ -1,7 +1,7 @@
 """
 Processor - Multiprocessing Architecture (PRIMARY & SECONDARY)
 ================================================================================
-Tien trinh 1 (PRIMARY): Chay YOLO1 de phan loai 38 loai rac
+Tien trinh 1 (PRIMARY): Chay YOLO1 de phan loai 34 loai rac
 Tien trinh 2 (SECONDARY): Chay YOLO2 de xac nhan co nuoc/khong nuoc
 
 Giao thuc giao tiep:
@@ -70,46 +70,42 @@ class PrimaryProcessor(mp.Process):
         self.labels_map = self._init_labels_map()
 
     def _init_labels_map(self) -> Dict[int, str]:
-        """38 loai rac thai (dung de map class_id -> label)."""
+
         return {
-            0: "plastic_bottle",
-            1: "plastic_bag",
-            2: "plastic_cup",
-            3: "plastic_container",
-            4: "paper_box",
-            5: "paper_sheet",
-            6: "cardboard",
-            7: "newspaper",
-            8: "aluminum_can",
-            9: "steel_can",
-            10: "glass_bottle",
-            11: "glass_jar",
-            12: "metal_can",
-            13: "metal_wire",
-            14: "textile_cloth",
-            15: "textile_bag",
-            16: "wood_piece",
-            17: "wood_board",
-            18: "ceramic_cup",
-            19: "ceramic_plate",
-            20: "leather_shoe",
-            21: "leather_bag",
-            22: "rubber_tire",
-            23: "rubber_ball",
-            24: "food_waste",
-            25: "food_bottle",
-            26: "organic_material",
-            27: "electronic_device",
-            28: "battery",
-            29: "lightbulb",
-            30: "metal_scrap",
-            31: "plastic_film",
-            32: "foam_material",
-            33: "composite_material",
-            34: "mixed_waste",
-            35: "hazardous",
-            36: "unknown",
-            37: "misc",
+            0: "battery",
+            1: "dangerous",
+            2: "Electronic",
+            3: "light",
+            4: "lighter",
+            5: "medicine",
+            6: "pressurized_can",
+            7: "thermometer",
+            8: "book",
+            9: "bucket",
+            10: "cans",
+            11: "cardboard",
+            12: "CD",
+            13: "glass",
+            14: "glass_bottle",
+            15: "paper",
+            16: "paper_box",
+            17: "plastic_bottle",
+            18: "coffee_residue",
+            19: "egg_shell",
+            20: "food_organics",
+            21: "teabag",
+            22: "household",
+            23: "milk_carton",
+            24: "pants",
+            25: "shirt",
+            26: "shoes",
+            27: "bowl",
+            28: "cigarette",
+            29: "diaper",
+            30: "mask",
+            31: "nylon",
+            32: "pen",
+            33: "tissues",
         }
 
     def load_model(self) -> bool:
@@ -128,7 +124,9 @@ class PrimaryProcessor(mp.Process):
             print(f"[PRIMARY-{self.worker_id}] ✗ Error loading YOLO1: {exc}")
             return False
 
-    def perform_inference(self, image: np.ndarray) -> Tuple[str, float, Optional[np.ndarray]]:
+    def perform_inference(
+        self, image: np.ndarray
+    ) -> Tuple[str, float, Optional[int], Optional[np.ndarray]]:
         """
         Thuc hien YOLO1 inference.
 
@@ -136,14 +134,17 @@ class PrimaryProcessor(mp.Process):
             image: OpenCV image (numpy array)
 
         Returns:
-            Tuple: (label, confidence, crop_image_for_secondary)
+            Tuple: (label, confidence, class_id, crop_image_for_secondary)
         """
         try:
             if self.yolo_model is None:
-                dummy_labels = list(self.labels_map.values())[:5]
+                dummy_ids = list(self.labels_map.keys())[:5]
+                class_id = int(np.random.choice(dummy_ids))
+                dummy_label = self.labels_map.get(class_id, "unknown")
                 return (
-                    np.random.choice(dummy_labels),
+                    dummy_label,
                     float(np.random.uniform(0.7, 0.99)),
+                    class_id,
                     image,
                 )
 
@@ -176,13 +177,13 @@ class PrimaryProcessor(mp.Process):
                         max(0, x1) : min(image.shape[1], x2),
                     ]
 
-                    return label, confidence, crop_image
+                    return label, confidence, class_id, crop_image
 
-            return "no_detection", 0.0, image
+                return "no_detection", 0.0, None, image
 
         except Exception as exc:
             print(f"[PRIMARY-{self.worker_id}] ✗ Inference error: {exc}")
-            return "error", 0.0, image
+            return "error", 0.0, None, image
 
     def run(self) -> None:
         """Main loop cua PRIMARY process."""
@@ -210,13 +211,16 @@ class PrimaryProcessor(mp.Process):
 
                     results = []
                     for idx, (image, weight) in enumerate(zip(images, weights)):
-                        label, confidence, crop_image = self.perform_inference(image)
+                        label, confidence, class_id, crop_image = self.perform_inference(
+                            image
+                        )
 
                         result = {
                             "batch_id": batch_id,
                             "image_idx": idx,
                             "label": label,
                             "confidence": confidence,
+                            "class_id": class_id,
                             "crop_image": crop_image,
                             "weight_grams": weight,
                             "timestamp": datetime.utcnow().isoformat(),
@@ -376,6 +380,29 @@ class SecondaryProcessor(mp.Process):
 
         return ("yes", model_conf * 0.80)
 
+    def classify_group_by_class_id(self, class_id: Optional[int]) -> Tuple[int, str]:
+        """
+        Xep nhom rac theo class_id.
+
+        Returns:
+            Tuple: (group_id, group_name)
+        """
+        if class_id is None:
+            return (0, "unknown")
+
+        if 0 <= class_id <= 7:
+            return (1, "hazardous")
+        if 8 <= class_id <= 16:
+            return (2, "recyclable")
+        if 18 <= class_id <= 21:
+            return (3, "organic")
+        if 22 <= class_id <= 26:
+            return (4, "mixed")
+        if 27 <= class_id <= 33:
+            return (5, "residual")
+
+        return (0, "unknown")
+
     def run(self) -> None:
         """Main loop cua SECONDARY process."""
         print(f"\n[SECONDARY-{self.worker_id}] Khoi dong tien trinh Secondary Verification")
@@ -404,20 +431,49 @@ class SecondaryProcessor(mp.Process):
                         crop_image = primary_result["crop_image"]
                         label = primary_result["label"]
                         weight_grams = primary_result["weight_grams"]
+                        class_id = primary_result.get("class_id")
+
+                        if label != "plastic_bottle":
+                            group_id, group_name = self.classify_group_by_class_id(
+                                class_id
+                            )
+                            final_result = {
+                                "batch_id": batch_id,
+                                "image_idx": primary_result["image_idx"],
+                                "label": label,
+                                "confidence": primary_result["confidence"],
+                                "has_liquid": "no",
+                                "liquid_confidence": 0.0,
+                                "weight_grams": weight_grams,
+                                "group_id": group_id,
+                                "group_name": group_name,
+                                "timestamp": datetime.utcnow().isoformat(),
+                            }
+                            final_results.append(final_result)
+                            continue
 
                         model_detected, model_conf = self.detect_liquid(crop_image)
                         has_liquid, liquid_conf = self.determine_has_liquid(
                             model_detected, model_conf, label, weight_grams
                         )
 
+                        if has_liquid == "yes":
+                            final_label = "liquid"
+                            group_id, group_name = (4, "mixed")
+                        else:
+                            final_label = label
+                            group_id, group_name = (2, "recyclable")
+
                         final_result = {
                             "batch_id": batch_id,
                             "image_idx": primary_result["image_idx"],
-                            "label": label,
+                            "label": final_label,
                             "confidence": primary_result["confidence"],
                             "has_liquid": has_liquid,
                             "liquid_confidence": liquid_conf,
                             "weight_grams": weight_grams,
+                            "group_id": group_id,
+                            "group_name": group_name,
                             "timestamp": datetime.utcnow().isoformat(),
                         }
                         final_results.append(final_result)

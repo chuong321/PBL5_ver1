@@ -37,7 +37,7 @@ MAX_QUEUE_SIZE = 100
 
 # Weight threshold (grams) - Dung de kiem tra co nuoc
 WEIGHT_THRESHOLD = {
-    "bottle": 50,
+    "plastic_bottle": 50,
     "can": 30,
     "glass": 100,
     "default": 50,
