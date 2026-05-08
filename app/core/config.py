@@ -60,7 +60,7 @@ WEBSOCKET_MAX_CONNECTIONS = 10
 WEBSOCKET_PING_INTERVAL = 30
 
 # ==================== PERFORMANCE - YOLO1 (Primary) ====================
-YOLO1_CONF = 0.4
+YOLO1_CONF = 0.1
 YOLO1_IMGSZ = 320
 YOLO1_DEVICE = "cpu"
 

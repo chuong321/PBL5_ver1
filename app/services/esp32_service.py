@@ -42,12 +42,28 @@ class WebSocketConnectionManager:
                 self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict) -> None:
+        # Avoid holding the lock while awaiting network I/O.
+        # Slow/blocked clients should not stall everyone else (incl. ESP32).
         async with self.lock:
-            for connection in list(self.active_connections):
-                try:
-                    await connection.send_json(message)
-                except Exception:
-                    pass
+            connections = list(self.active_connections)
+
+        if not connections:
+            return
+
+        async def _safe_send(connection: WebSocket) -> bool:
+            try:
+                await connection.send_json(message)
+                return True
+            except Exception:
+                return False
+
+        results = await asyncio.gather(*(_safe_send(c) for c in connections), return_exceptions=False)
+        dead = [c for c, ok in zip(connections, results) if not ok]
+        if dead:
+            async with self.lock:
+                for c in dead:
+                    if c in self.active_connections:
+                        self.active_connections.remove(c)
 
 
 manager = WebSocketConnectionManager()
@@ -85,6 +101,15 @@ def decode_image_from_base64(base64_str: str) -> Optional[np.ndarray]:
     try:
         image_data = base64.b64decode(base64_str)
         nparr = np.frombuffer(image_data, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        return img
+    except Exception:
+        return None
+
+
+def decode_image_from_jpeg_bytes(jpeg_bytes: bytes) -> Optional[np.ndarray]:
+    try:
+        nparr = np.frombuffer(jpeg_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         return img
     except Exception:
