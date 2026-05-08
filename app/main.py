@@ -20,7 +20,6 @@ from app.core.config import (
 )
 from app.models.trash_record import init_db, get_session_factory
 from app.repositories.trash_repository import TrashRepository
-from app.services.classification_service import determine_output_code
 from app.services.esp32_service import manager, BatchIdGenerator
 from app.workers.processor import start_orchestrator, stop_orchestrator, get_orchestrator
 from app.api.routes import dashboard_router, stats_router, esp32_router
@@ -48,8 +47,12 @@ async def process_batches_background(app: FastAPI) -> None:
                         has_liquid = res["has_liquid"]
                         liquid_conf = res["liquid_confidence"]
                         weight_grams = res["weight_grams"]
+                        detections = res.get("detections", [])
+                        image_shape = res.get("image_shape")
 
-                        output_code = determine_output_code(label, has_liquid, weight_grams)
+                        group_id = res.get("group_id")
+                        group_name = res.get("group_name")
+                        output_code = group_id if group_id is not None else 0
 
                         record = TrashRepository.create_record(
                             db_session=session,
@@ -73,6 +76,10 @@ async def process_batches_background(app: FastAPI) -> None:
                                     "confidence": confidence,
                                     "has_liquid": has_liquid,
                                     "weight_grams": weight_grams,
+                                    "detections": detections,
+                                    "image_shape": image_shape,
+                                    "group_id": group_id,
+                                    "group_name": group_name,
                                     "output_code": output_code,
                                 }
                             )

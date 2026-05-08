@@ -61,7 +61,7 @@ WEBSOCKET_PING_INTERVAL = 30
 
 # ==================== PERFORMANCE - YOLO1 (Primary) ====================
 YOLO1_CONF = 0.4
-YOLO1_IMGSZ = 416
+YOLO1_IMGSZ = 320
 YOLO1_DEVICE = "cpu"
 
 # ==================== PERFORMANCE - YOLO2 (Secondary) ====================

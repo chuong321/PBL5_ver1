@@ -85,7 +85,7 @@
                             </div>
                         </div>
                         <div style="background: #f9fafb; padding: 12px; border-radius: 6px; text-align: center; font-size: 0.85em; color: var(--text-secondary);">
-                            1=Có nước | 2=Không nước | 3=Lỗi | 4=Khác | 5=Không detect
+                            1=Hazardous | 2=Recyclable | 3=Organic | 4=Mixed | 5=Residual
                         </div>
                     </div>
                 </div>
@@ -241,6 +241,7 @@
         let canvasCtx = null;
         let eventLog = [];
         const MAX_LOG_ITEMS = 5;
+        let lastFrameData = null;
 
         // ===== STYLE FOR STATUS INDICATOR =====
         const style = document.createElement('style');
@@ -267,14 +268,17 @@
                 const img = new Image();
                 img.onload = () => {
                     canvasCtx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                    const scaleX = canvas.width / img.width;
+                    const scaleY = canvas.height / img.height;
                     
                     // Draw bounding boxes
                     if (detections && detections.length > 0) {
                         detections.forEach(det => {
-                            const x = det.x * (canvas.width / 640);
-                            const y = det.y * (canvas.height / 360);
-                            const w = det.width * (canvas.width / 640);
-                            const h = det.height * (canvas.height / 360);
+                            const x = det.x * scaleX;
+                            const y = det.y * scaleY;
+                            const w = det.width * scaleX;
+                            const h = det.height * scaleY;
                             
                             // Draw box
                             canvasCtx.strokeStyle = '#4ECDC4';
@@ -364,11 +368,11 @@
             document.getElementById('output-code').textContent = result.output_code || '-';
             
             const codeDescMap = {
-                1: '🟢 Có nước - Gạt vào thùng 1',
-                2: '🟡 Không nước - Gạt vào thùng 2',
-                3: '🔴 Lỗi - Lưu vào thùng 3',
-                4: '🔵 Loại khác - Gạt vào thùng 4',
-                5: '⚫ Không detect - Bỏ qua'
+                1: '🟣 Hazardous',
+                2: '🟢 Recyclable',
+                3: '🟡 Organic',
+                4: '🟠 Mixed',
+                5: '⚫ Residual'
             };
             document.getElementById('output-code-desc').textContent = 
                 codeDescMap[result.output_code] || 'Chờ dữ liệu...';
@@ -437,6 +441,7 @@
         function handleWebSocketMessage(message) {
             if (message.type === 'frame') {
                 // Display video frame with detections
+                lastFrameData = message.data;
                 drawBoundingBoxes(message.data, message.detections || []);
             } else if (message.type === 'sensor_data') {
                 updateSensors(message.data);
@@ -446,6 +451,9 @@
                 if (message.data.results && message.data.results.length > 0) {
                     const result = message.data.results[0];
                     updateAIResult(result);
+                    if (lastFrameData && result.detections && result.detections.length > 0) {
+                        drawBoundingBoxes(lastFrameData, result.detections);
+                    }
                 }
                 loadStats();
             }

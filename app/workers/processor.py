@@ -129,7 +129,14 @@ class PrimaryProcessor(mp.Process):
 
     def perform_inference(
         self, image: np.ndarray
-    ) -> Tuple[str, float, Optional[int], Optional[np.ndarray]]:
+    ) -> Tuple[
+        str,
+        float,
+        Optional[int],
+        Optional[np.ndarray],
+        list,
+        Optional[Tuple[int, int]],
+    ]:
         """
         Thuc hien YOLO1 inference.
 
@@ -137,12 +144,12 @@ class PrimaryProcessor(mp.Process):
             image: OpenCV image (numpy array)
 
         Returns:
-            Tuple: (label, confidence, class_id, crop_image_for_secondary)
+            Tuple: (label, confidence, class_id, crop_image_for_secondary, detections, image_shape)
         """
         try:
             if image is None:
                 self.logger.warning("YOLO1 input image is None")
-                return "error", 0.0, None, image
+                return "error", 0.0, None, image, [], None
 
             self.logger.info(
                 "YOLO1 input image shape=%s dtype=%s",
@@ -159,6 +166,8 @@ class PrimaryProcessor(mp.Process):
                     float(np.random.uniform(0.7, 0.99)),
                     class_id,
                     image,
+                    [],
+                    (int(image.shape[1]), int(image.shape[0])),
                 )
 
             self.logger.info("YOLO1 inference started")
@@ -177,6 +186,20 @@ class PrimaryProcessor(mp.Process):
                     confidences = result.boxes.conf.cpu().numpy()
                     class_ids = result.boxes.cls.cpu().numpy().astype(int)
                     boxes = result.boxes.xyxy.cpu().numpy().astype(int)
+
+                    detections = []
+                    for box, cid, conf in zip(boxes, class_ids, confidences):
+                        x1, y1, x2, y2 = box
+                        detections.append(
+                            {
+                                "x": int(x1),
+                                "y": int(y1),
+                                "width": int(x2 - x1),
+                                "height": int(y2 - y1),
+                                "label": self._get_model_label(int(cid)),
+                                "confidence": float(conf),
+                            }
+                        )
 
                     all_detections = [
                         (self._get_model_label(int(cid)), float(conf))
@@ -209,13 +232,27 @@ class PrimaryProcessor(mp.Process):
                         max(0, x1) : min(image.shape[1], x2),
                     ]
 
-                    return label, confidence, custom_class_id, crop_image
+                    return (
+                        label,
+                        confidence,
+                        custom_class_id,
+                        crop_image,
+                        detections,
+                        (int(image.shape[1]), int(image.shape[0])),
+                    )
 
                 self.logger.warning(
                     "YOLO1 no_detection (boxes=0) image_shape=%s",
                     getattr(image, "shape", None),
                 )
-                return "no_detection", 0.0, None, image
+                return (
+                    "no_detection",
+                    0.0,
+                    None,
+                    image,
+                    [],
+                    (int(image.shape[1]), int(image.shape[0])),
+                )
 
         except Exception as exc:
             self.logger.exception(
@@ -223,7 +260,7 @@ class PrimaryProcessor(mp.Process):
                 exc,
                 getattr(image, "shape", None),
             )
-            return "error", 0.0, None, image
+            return "error", 0.0, None, image, [], None
 
     def _get_model_label(self, class_id: int) -> str:
         if isinstance(self.model_names, dict):
@@ -259,9 +296,14 @@ class PrimaryProcessor(mp.Process):
 
                     results = []
                     for idx, (image, weight) in enumerate(zip(images, weights)):
-                        label, confidence, class_id, crop_image = self.perform_inference(
-                            image
-                        )
+                        (
+                            label,
+                            confidence,
+                            class_id,
+                            crop_image,
+                            detections,
+                            image_shape,
+                        ) = self.perform_inference(image)
 
                         result = {
                             "batch_id": batch_id,
@@ -270,6 +312,8 @@ class PrimaryProcessor(mp.Process):
                             "confidence": confidence,
                             "class_id": class_id,
                             "crop_image": crop_image,
+                            "detections": detections,
+                            "image_shape": image_shape,
                             "weight_grams": weight,
                             "timestamp": datetime.utcnow().isoformat(),
                         }
@@ -480,6 +524,8 @@ class SecondaryProcessor(mp.Process):
                         label = primary_result["label"]
                         weight_grams = primary_result["weight_grams"]
                         class_id = primary_result.get("class_id")
+                        detections = primary_result.get("detections", [])
+                        image_shape = primary_result.get("image_shape")
 
                         if label != "plastic_bottle":
                             group_id, group_name = self.classify_group_by_class_id(
@@ -493,6 +539,8 @@ class SecondaryProcessor(mp.Process):
                                 "has_liquid": "no",
                                 "liquid_confidence": 0.0,
                                 "weight_grams": weight_grams,
+                                "detections": detections,
+                                "image_shape": image_shape,
                                 "group_id": group_id,
                                 "group_name": group_name,
                                 "timestamp": datetime.utcnow().isoformat(),
@@ -520,6 +568,8 @@ class SecondaryProcessor(mp.Process):
                             "has_liquid": has_liquid,
                             "liquid_confidence": liquid_conf,
                             "weight_grams": weight_grams,
+                            "detections": detections,
+                            "image_shape": image_shape,
                             "group_id": group_id,
                             "group_name": group_name,
                             "timestamp": datetime.utcnow().isoformat(),
