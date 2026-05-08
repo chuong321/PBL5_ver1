@@ -11,6 +11,7 @@ from fastapi import WebSocket
 
 esp32_connected = False
 esp32_last_seen: Optional[datetime] = None
+esp32_latest_weight_grams: Optional[float] = None
 esp32_lock = asyncio.Lock()
 
 
@@ -52,11 +53,13 @@ class WebSocketConnectionManager:
 manager = WebSocketConnectionManager()
 
 
-async def mark_esp32_seen() -> None:
-    global esp32_connected, esp32_last_seen
+async def mark_esp32_seen(weight_grams: Optional[float] = None) -> None:
+    global esp32_connected, esp32_last_seen, esp32_latest_weight_grams
     async with esp32_lock:
         esp32_connected = True
         esp32_last_seen = datetime.utcnow()
+        if weight_grams is not None:
+            esp32_latest_weight_grams = float(weight_grams)
 
 
 async def mark_esp32_disconnected() -> None:
@@ -65,16 +68,17 @@ async def mark_esp32_disconnected() -> None:
         esp32_connected = False
 
 
-async def read_esp32_state() -> Tuple[bool, Optional[datetime], Optional[float]]:
+async def read_esp32_state() -> Tuple[bool, Optional[datetime], Optional[float], Optional[float]]:
     async with esp32_lock:
         connected = esp32_connected
         last_seen = esp32_last_seen
+        latest_weight_grams = esp32_latest_weight_grams
 
     age_seconds = None
     if connected and last_seen:
         age_seconds = (datetime.utcnow() - last_seen).total_seconds()
 
-    return connected, last_seen, age_seconds
+    return connected, last_seen, age_seconds, latest_weight_grams
 
 
 def decode_image_from_base64(base64_str: str) -> Optional[np.ndarray]:

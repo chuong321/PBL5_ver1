@@ -233,8 +233,8 @@
     </div>
 
     <script>
-        const API_BASE = 'http://localhost:8000';
-        const WS_URL = 'ws://localhost:8000/ws';
+        const API_BASE = window.location.origin;
+        const WS_URL = `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
         
         let websocket = null;
         let canvas = null;
@@ -317,22 +317,44 @@
         }
 
         // ===== UPDATE SENSOR DATA =====
-        function updateSensors(data) {
-            // Weight
-            if (data.weight_grams !== undefined) {
-                document.getElementById('sensor-weight').textContent = 
-                    data.weight_grams.toFixed(1) + ' g';
-            }
-            
-            // ESP32 Status
+        function setEspConnectionStatus(connected) {
             const espStatus = document.getElementById('esp-status');
             const espText = document.getElementById('esp-status-text');
-            if (data.esp_connected) {
+            if (!espStatus || !espText) return;
+
+            if (connected) {
                 espStatus.style.background = '#10B981';
+                espStatus.style.animation = 'none';
                 espText.textContent = '✓ Kết nối thành công';
             } else {
                 espStatus.style.background = '#f44336';
-                espText.textContent = '✗ Chất lượng tín hiệu yếu';
+                espStatus.style.animation = 'blink 1s infinite';
+                espText.textContent = 'Ngắt kết nối';
+            }
+        }
+
+        async function refreshEspStatus() {
+            try {
+                const response = await fetch(`${API_BASE}/api/esp32/status`);
+                const data = await response.json();
+                setEspConnectionStatus(!!data.connected);
+                if (data.latest_weight_grams !== undefined && data.latest_weight_grams !== null) {
+                    document.getElementById('sensor-weight').textContent =
+                        Number(data.latest_weight_grams).toFixed(1) + ' g';
+                } else {
+                    document.getElementById('sensor-weight').textContent = '0 g';
+                }
+            } catch (error) {
+                setEspConnectionStatus(false);
+            }
+        }
+
+        function updateSensors(data) {
+            // Weight
+            if (data.weight_grams !== undefined) {
+                const weight = Number(data.weight_grams);
+                document.getElementById('sensor-weight').textContent = 
+                    (Number.isFinite(weight) ? weight.toFixed(1) : '0.0') + ' g';
             }
         }
 
@@ -384,7 +406,6 @@
                     console.log('WebSocket connected');
                     document.getElementById('video-status').textContent = '🟢 Kết nối thành công';
                     document.getElementById('video-status').style.color = '#10B981';
-                    updateSensors({ esp_connected: true });
                 };
                 
                 websocket.onmessage = (event) => {
@@ -452,18 +473,13 @@
             setupCanvas();
             initWebSocket();
             loadStats();
+            refreshEspStatus();
             
             // Auto-refresh stats every 10 seconds
             setInterval(loadStats, 10000);
+            // Poll trang thai ESP tu backend (nguon su that)
+            setInterval(refreshEspStatus, 2000);
         });
-    </script>
-</body>
-</html>
-        setInterval(loadStats, 5000);
-        
-        // WebSocket test
-        console.log('Dashboard loaded successfully!');
-        console.log('WebSocket URL: ws://localhost:8000/ws');
     </script>
 </body>
 </html>
