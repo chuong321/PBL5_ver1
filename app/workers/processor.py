@@ -16,6 +16,7 @@ Co che ket hop (2 tien trinh hoat dong song song):
 """
 
 import os
+import logging
 import multiprocessing as mp
 import queue
 import numpy as np
@@ -62,50 +63,51 @@ class PrimaryProcessor(mp.Process):
     ):
         super().__init__()
         self.daemon = False
+        self.logger = logging.getLogger(__name__)
         self.input_queue = input_queue
         self.intermediate_queue = intermediate_queue
         self.shutdown_event = shutdown_event
         self.worker_id = worker_id
         self.yolo_model = None
-        self.labels_map = self._init_labels_map()
+        self.model_names = None
+        self.custom_label_to_index = self._init_custom_label_to_index()
 
-    def _init_labels_map(self) -> Dict[int, str]:
-
+    def _init_custom_label_to_index(self) -> Dict[str, int]:
         return {
-            0: "battery",
-            1: "dangerous",
-            2: "Electronic",
-            3: "light",
-            4: "lighter",
-            5: "medicine",
-            6: "pressurized_can",
-            7: "thermometer",
-            8: "book",
-            9: "bucket",
-            10: "cans",
-            11: "cardboard",
-            12: "CD",
-            13: "glass",
-            14: "glass_bottle",
-            15: "paper",
-            16: "paper_box",
-            17: "plastic_bottle",
-            18: "coffee_residue",
-            19: "egg_shell",
-            20: "food_organics",
-            21: "teabag",
-            22: "household",
-            23: "milk_carton",
-            24: "pants",
-            25: "shirt",
-            26: "shoes",
-            27: "bowl",
-            28: "cigarette",
-            29: "diaper",
-            30: "mask",
-            31: "nylon",
-            32: "pen",
-            33: "tissues",
+            "battery": 0,
+            "dangerous": 1,
+            "Electronic": 2,
+            "light": 3,
+            "lighter": 4,
+            "medicine": 5,
+            "pressurized_can": 6,
+            "thermometer": 7,
+            "book": 8,
+            "bucket": 9,
+            "cans": 10,
+            "cardboard": 11,
+            "CD": 12,
+            "glass": 13,
+            "glass_bottle": 14,
+            "paper": 15,
+            "paper_box": 16,
+            "plastic_bottle": 17,
+            "coffee_residue": 18,
+            "egg_shell": 19,
+            "food_organics": 20,
+            "teabag": 21,
+            "household": 22,
+            "milk_carton": 23,
+            "pants": 24,
+            "shirt": 25,
+            "shoes": 26,
+            "bowl": 27,
+            "cigarette": 28,
+            "diaper": 29,
+            "mask": 30,
+            "nylon": 31,
+            "pen": 32,
+            "tissues": 33,
         }
 
     def load_model(self) -> bool:
@@ -115,6 +117,7 @@ class PrimaryProcessor(mp.Process):
                 from ultralytics import YOLO
 
                 self.yolo_model = YOLO(MODEL_PATH)
+                self.model_names = self.yolo_model.names
                 print(f"[PRIMARY-{self.worker_id}] ✓ YOLO1 model loaded: {MODEL_PATH}")
                 return True
 
@@ -137,10 +140,20 @@ class PrimaryProcessor(mp.Process):
             Tuple: (label, confidence, class_id, crop_image_for_secondary)
         """
         try:
+            if image is None:
+                self.logger.warning("YOLO1 input image is None")
+                return "error", 0.0, None, image
+
+            self.logger.info(
+                "YOLO1 input image shape=%s dtype=%s",
+                getattr(image, "shape", None),
+                getattr(image, "dtype", None),
+            )
+
             if self.yolo_model is None:
-                dummy_ids = list(self.labels_map.keys())[:5]
-                class_id = int(np.random.choice(dummy_ids))
-                dummy_label = self.labels_map.get(class_id, "unknown")
+                dummy_labels = list(self.custom_label_to_index.keys())[:5]
+                dummy_label = str(np.random.choice(dummy_labels))
+                class_id = self.custom_label_to_index.get(dummy_label)
                 return (
                     dummy_label,
                     float(np.random.uniform(0.7, 0.99)),
@@ -148,6 +161,7 @@ class PrimaryProcessor(mp.Process):
                     image,
                 )
 
+            self.logger.info("YOLO1 inference started")
             results = self.yolo_model(
                 image,
                 conf=YOLO1_CONF,
@@ -164,12 +178,30 @@ class PrimaryProcessor(mp.Process):
                     class_ids = result.boxes.cls.cpu().numpy().astype(int)
                     boxes = result.boxes.xyxy.cpu().numpy().astype(int)
 
+                    all_detections = [
+                        (self._get_model_label(int(cid)), float(conf))
+                        for cid, conf in zip(class_ids.tolist(), confidences.tolist())
+                    ]
+                    self.logger.info(
+                        "YOLO1 detected %d boxes: %s",
+                        len(all_detections),
+                        all_detections,
+                    )
+
                     max_idx = np.argmax(confidences)
                     confidence = float(confidences[max_idx])
                     class_id = int(class_ids[max_idx])
                     box = boxes[max_idx]
 
-                    label = self.labels_map.get(class_id, f"unknown_{class_id}")
+                    label = self._get_model_label(class_id)
+                    custom_class_id = self.custom_label_to_index.get(label)
+
+                    self.logger.info(
+                        "YOLO1 model_class_id=%s label=%s custom_class_id=%s",
+                        class_id,
+                        label,
+                        custom_class_id,
+                    )
 
                     x1, y1, x2, y2 = box
                     crop_image = image[
@@ -177,13 +209,29 @@ class PrimaryProcessor(mp.Process):
                         max(0, x1) : min(image.shape[1], x2),
                     ]
 
-                    return label, confidence, class_id, crop_image
+                    return label, confidence, custom_class_id, crop_image
 
+                self.logger.warning(
+                    "YOLO1 no_detection (boxes=0) image_shape=%s",
+                    getattr(image, "shape", None),
+                )
                 return "no_detection", 0.0, None, image
 
         except Exception as exc:
-            print(f"[PRIMARY-{self.worker_id}] ✗ Inference error: {exc}")
+            self.logger.exception(
+                "YOLO1 inference error: %s image_shape=%s",
+                exc,
+                getattr(image, "shape", None),
+            )
             return "error", 0.0, None, image
+
+    def _get_model_label(self, class_id: int) -> str:
+        if isinstance(self.model_names, dict):
+            return self.model_names.get(class_id, f"unknown_{class_id}")
+        if isinstance(self.model_names, (list, tuple)):
+            if 0 <= class_id < len(self.model_names):
+                return self.model_names[class_id]
+        return f"unknown_{class_id}"
 
     def run(self) -> None:
         """Main loop cua PRIMARY process."""
