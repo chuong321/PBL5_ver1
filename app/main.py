@@ -70,7 +70,7 @@ async def process_batches_background(app: FastAPI) -> None:
                                 {
                                     "image_idx": idx,
                                     "label": label,
-                                    "confidence": f"{confidence:.2%}",
+                                    "confidence": confidence,
                                     "has_liquid": has_liquid,
                                     "weight_grams": weight_grams,
                                     "output_code": output_code,
