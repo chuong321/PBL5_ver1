@@ -465,7 +465,14 @@ class SecondaryProcessor(mp.Process):
             Tuple: ('yes'/'no', final_confidence)
         """
 
-        threshold_key = "plastic_bottle" if "bottle" in label.lower() else "default"
+        if label == "plastic_bottle":
+            threshold_key = "plastic_bottle"
+        elif "glass" in label.lower():
+            threshold_key = "glass"
+        elif "bottle" in label.lower():
+            threshold_key = "plastic_bottle"
+        else:
+            threshold_key = "default"
         weight_threshold = WEIGHT_THRESHOLD.get(
             threshold_key, WEIGHT_THRESHOLD.get("default", 0)
         )
@@ -496,7 +503,7 @@ class SecondaryProcessor(mp.Process):
 
         if 0 <= class_id <= 7:
             return (1, "hazardous")
-        if 8 <= class_id <= 16:
+        if 8 <= class_id <= 17:  # 8-16: recyclable, 17: plastic_bottle (cũng recyclable)
             return (2, "recyclable")
         if 18 <= class_id <= 21:
             return (3, "organic")
