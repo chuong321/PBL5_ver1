@@ -1,5 +1,6 @@
 """Stats and records endpoints."""
 
+import asyncio
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
@@ -10,7 +11,10 @@ from app.schemas.stats import StatsResponse, HealthResponse
 from app.schemas.esp32 import ImageData
 from app.models.trash_record import TrashRecord
 from app.workers.processor import get_orchestrator
-from app.services.esp32_service import decode_image_from_base64
+from app.services.esp32_service import decode_image_from_base64, preprocess_esp32_image
+from app.services.carbon_footprint_service import (
+    summarize_carbon_footprint_by_label_weight,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -34,11 +38,40 @@ async def get_stats(db_session: Session = Depends(get_db)):
         TrashRecord.timestamp >= time_24h
     ).count()
 
+    carbon_rows = (
+        db_session.query(
+            TrashRecord.label,
+            func.sum(TrashRecord.weight_grams).label("weight_grams"),
+        )
+        .filter(TrashRecord.weight_grams.isnot(None), TrashRecord.weight_grams > 0)
+        .group_by(TrashRecord.label)
+        .all()
+    )
+    carbon_24h_rows = (
+        db_session.query(
+            TrashRecord.label,
+            func.sum(TrashRecord.weight_grams).label("weight_grams"),
+        )
+        .filter(
+            TrashRecord.timestamp >= time_24h,
+            TrashRecord.weight_grams.isnot(None),
+            TrashRecord.weight_grams > 0,
+        )
+        .group_by(TrashRecord.label)
+        .all()
+    )
+    carbon_summary = summarize_carbon_footprint_by_label_weight(carbon_rows)
+    carbon_24h_summary = summarize_carbon_footprint_by_label_weight(carbon_24h_rows)
+
     return StatsResponse(
         total_records=total,
         total_by_label=total_by_label,
         average_confidence=avg_conf,
         recent_24h=recent_24h,
+        carbon_footprint_kg_co2e=carbon_summary["total_kg_co2e"],
+        carbon_footprint_24h_kg_co2e=carbon_24h_summary["total_kg_co2e"],
+        carbon_footprint_by_label=carbon_summary["by_label"],
+        total_weight_kg=carbon_summary["total_weight_kg"],
     )
 
 
@@ -92,12 +125,15 @@ async def get_records(
 @router.post("/image")
 async def upload_image(image_data: ImageData, request: Request):
     image = decode_image_from_base64(image_data.data)
-    if image is None:
+    processed_image = await asyncio.to_thread(preprocess_esp32_image, image)
+    if processed_image is None:
         raise HTTPException(status_code=400, detail="Invalid image")
 
     batch_id = await request.app.state.batch_id_generator.next_id()
     orchestrator = get_orchestrator()
-    result = orchestrator.submit_batch(batch_id, [image], [image_data.weight_grams])
+    result = orchestrator.submit_batch(
+        batch_id, [processed_image], [image_data.weight_grams]
+    )
 
     if result != -1:
         return {"status": "batch_submitted", "batch_id": batch_id, "image_count": 1}

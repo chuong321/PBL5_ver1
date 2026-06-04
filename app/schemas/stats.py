@@ -9,6 +9,10 @@ class StatsResponse(BaseModel):
     total_by_label: Dict[str, int]
     average_confidence: float
     recent_24h: int
+    carbon_footprint_kg_co2e: float
+    carbon_footprint_24h_kg_co2e: float
+    carbon_footprint_by_label: Dict[str, float]
+    total_weight_kg: float
 
 
 class HealthResponse(BaseModel):
