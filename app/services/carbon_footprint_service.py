@@ -1,4 +1,4 @@
-"""Carbon footprint estimation helpers for classified trash records."""
+"""CO2e savings estimation helpers for recyclable trash records."""
 
 from collections import defaultdict
 from typing import Iterable, Optional
@@ -6,54 +6,66 @@ from typing import Iterable, Optional
 from app.models.trash_record import TrashRecord
 
 
-DEFAULT_EMISSION_FACTOR_KG_CO2E_PER_KG = 1.0
+EPA_WARM_FACTORS_SOURCE = (
+    "U.S. EPA, Waste Reduction Model (WARM) Version 16, "
+    "Management Practices Chapters and material-specific chapters."
+)
+EPA_WARM_FACTORS_URL = (
+    "https://www.epa.gov/system/files/documents/2024-01/"
+    "warm_management_practices_v16_dec.pdf"
+)
+
+KG_PER_SHORT_TON = 907.18474
+KG_CO2E_PER_METRIC_TON_CO2E = 1000
+
+
+def _warm_factor(mtco2e_per_short_ton: float) -> float:
+    """Convert WARM MTCO2e/short ton material to kg CO2e/kg material."""
+    return mtco2e_per_short_ton * KG_CO2E_PER_METRIC_TON_CO2E / KG_PER_SHORT_TON
+
+
+# WARM factors are comparative life-cycle factors for material management options.
+# For the dashboard we estimate avoided emissions from recycling instead of
+# landfilling: avoided CO2e = mass * (EF_landfill - EF_recycling).
+RECYCLABLE_LABELS = {
+    "book",
+    "bucket",
+    "cans",
+    "cardboard",
+    "glass",
+    "glass_bottle",
+    "paper",
+    "paper_box",
+    "plastic_bottle",
+}
+
+WARM_LABEL_FACTORS = {
+    # Recyclables only. The CO2e savings dashboard intentionally ignores
+    # hazardous, organic, mixed, and residual detections.
+    # Values are MTCO2e/short ton from WARM v16:
+    # (WARM material, EF_landfill, EF_recycling).
+    "book": ("Textbooks", 1.13, -3.10),
+    "bucket": ("Mixed Plastics", 0.02, -0.93),
+    "cans": ("Aluminum Cans", 0.02, -9.13),
+    "cardboard": ("Corrugated Containers", 0.18, -3.14),
+    "glass": ("Glass", 0.02, -0.28),
+    "glass_bottle": ("Glass", 0.02, -0.28),
+    "paper": ("Office Paper", 1.13, -2.86),
+    "paper_box": ("Corrugated Containers", 0.18, -3.14),
+    "plastic_bottle": ("PET", 0.02, -1.04),
+}
+
+DEFAULT_EMISSION_FACTOR_KG_CO2E_PER_KG = 0.0
 
 EMISSION_FACTORS_KG_CO2E_PER_KG = {
-    # Hazardous and e-waste
-    "battery": 2.5,
-    "dangerous": 2.5,
-    "electronic": 3.0,
-    "light": 2.0,
-    "lighter": 2.0,
-    "medicine": 2.5,
-    "pressurized_can": 2.0,
-    "thermometer": 2.5,
-    # Recyclables
-    "book": 0.9,
-    "bucket": 2.3,
-    "cans": 8.6,
-    "cardboard": 0.7,
-    "CD": 3.0,
-    "glass": 0.8,
-    "glass_bottle": 0.8,
-    "paper": 0.9,
-    "paper_box": 0.7,
-    "plastic_bottle": 1.7,
-    "milk_carton": 1.2,
-    "nylon": 2.5,
-    "liquid": 0.3,
-    # Organic waste
-    "coffee_residue": 0.4,
-    "egg_shell": 0.3,
-    "food_organics": 0.5,
-    "teabag": 0.4,
-    # Mixed/residual waste
-    "household": 1.1,
-    "pants": 3.0,
-    "shirt": 3.0,
-    "shoes": 4.0,
-    "bowl": 1.2,
-    "cigarette": 1.0,
-    "diaper": 1.4,
-    "mask": 2.0,
-    "pen": 2.5,
-    "tissues": 0.9,
+    label: _warm_factor(landfill_factor - recycling_factor)
+    for label, (_, landfill_factor, recycling_factor) in WARM_LABEL_FACTORS.items()
 }
 
 
 def get_emission_factor(label: Optional[str]) -> float:
-    """Return kg CO2e per kg of waste for a label."""
-    if not label:
+    """Return kg CO2e avoided per kg for recyclable waste labels only."""
+    if not label or label not in RECYCLABLE_LABELS:
         return DEFAULT_EMISSION_FACTOR_KG_CO2E_PER_KG
 
     return EMISSION_FACTORS_KG_CO2E_PER_KG.get(
@@ -61,9 +73,18 @@ def get_emission_factor(label: Optional[str]) -> float:
     )
 
 
+def is_recyclable_label(label: Optional[str]) -> bool:
+    """Return True when a model label belongs to the recyclable group."""
+    return label in RECYCLABLE_LABELS
+
+
 def calculate_record_footprint_kg_co2e(record: TrashRecord) -> float:
-    """Estimate carbon footprint for one classification record."""
-    if record.weight_grams is None or record.weight_grams <= 0:
+    """Estimate avoided CO2e for one recyclable classification record."""
+    if (
+        not is_recyclable_label(record.label)
+        or record.weight_grams is None
+        or record.weight_grams <= 0
+    ):
         return 0.0
 
     weight_kg = record.weight_grams / 1000
@@ -71,12 +92,15 @@ def calculate_record_footprint_kg_co2e(record: TrashRecord) -> float:
 
 
 def summarize_carbon_footprint(records: Iterable[TrashRecord]) -> dict:
-    """Summarize total carbon footprint and per-label contribution."""
+    """Summarize total avoided CO2e and per-label contribution."""
     total_kg_co2e = 0.0
     total_weight_kg = 0.0
     by_label = defaultdict(float)
 
     for record in records:
+        if not is_recyclable_label(record.label):
+            continue
+
         footprint = calculate_record_footprint_kg_co2e(record)
         total_kg_co2e += footprint
         by_label[record.label] += footprint
@@ -97,13 +121,17 @@ def summarize_carbon_footprint(records: Iterable[TrashRecord]) -> dict:
 
 
 def summarize_carbon_footprint_by_label_weight(label_weight_rows: Iterable) -> dict:
-    """Summarize carbon footprint from grouped label and weight rows."""
+    """Summarize avoided CO2e from grouped label and weight rows."""
     total_kg_co2e = 0.0
     total_weight_kg = 0.0
     by_label = {}
 
     for label, weight_grams in label_weight_rows:
-        if weight_grams is None or weight_grams <= 0:
+        if (
+            not is_recyclable_label(label)
+            or weight_grams is None
+            or weight_grams <= 0
+        ):
             continue
 
         weight_kg = weight_grams / 1000
