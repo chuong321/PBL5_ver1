@@ -42,15 +42,32 @@ class WebSocketConnectionManager:
                 self.active_connections.remove(websocket)
 
     async def broadcast(self, message: dict) -> None:
+        # Avoid holding the lock while awaiting network I/O.
+        # Slow/blocked clients should not stall everyone else (incl. ESP32).
         async with self.lock:
-            for connection in list(self.active_connections):
-                try:
-                    await connection.send_json(message)
-                except Exception:
-                    pass
+            connections = list(self.active_connections)
+
+        if not connections:
+            return
+
+        async def _safe_send(connection: WebSocket) -> bool:
+            try:
+                await connection.send_json(message)
+                return True
+            except Exception:
+                return False
+
+        results = await asyncio.gather(*(_safe_send(c) for c in connections), return_exceptions=False)
+        dead = [c for c, ok in zip(connections, results) if not ok]
+        if dead:
+            async with self.lock:
+                for c in dead:
+                    if c in self.active_connections:
+                        self.active_connections.remove(c)
 
 
 manager = WebSocketConnectionManager()
+servo_manager = WebSocketConnectionManager()
 
 
 async def mark_esp32_seen(weight_grams: Optional[float] = None) -> None:
@@ -79,7 +96,6 @@ async def read_esp32_state() -> Tuple[bool, Optional[datetime], Optional[float],
         age_seconds = (datetime.utcnow() - last_seen).total_seconds()
 
     return connected, last_seen, age_seconds, latest_weight_grams
-
 
 def decode_image_from_base64(base64_str: str) -> Optional[np.ndarray]:
     try:
@@ -128,30 +144,41 @@ def preprocess_esp32_image(image: np.ndarray) -> Optional[np.ndarray]:
         return None
 
     try:
-        resized = resize_with_padding(image, target_size=(320, 320))
-        if resized is None:
-            return None
+        # resized = resize_with_padding(image, target_size=(320, 320))
+        # if resized is None:
+        #     return None
 
-        filtered = cv2.bilateralFilter(resized, d=5, sigmaColor=35, sigmaSpace=35)
+        # filtered = cv2.bilateralFilter(resized, d=5, sigmaColor=35, sigmaSpace=35)
 
-        lab = cv2.cvtColor(filtered, cv2.COLOR_BGR2LAB)
-        l_channel, a_channel, b_channel = cv2.split(lab)
-        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        l_enhanced = clahe.apply(l_channel)
-        enhanced = cv2.merge((l_enhanced, a_channel, b_channel))
-        enhanced_bgr = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+        # lab = cv2.cvtColor(filtered, cv2.COLOR_BGR2LAB)
+        # l_channel, a_channel, b_channel = cv2.split(lab)
+        # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        # l_enhanced = clahe.apply(l_channel)
+        # enhanced = cv2.merge((l_enhanced, a_channel, b_channel))
+        # enhanced_bgr = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
 
-        hsv = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2HSV)
-        h_channel, s_channel, v_channel = cv2.split(hsv)
-        s_boosted = cv2.multiply(s_channel, 1.3)
-        hsv_enhanced = cv2.merge((h_channel, s_boosted, v_channel))
-        enhanced_bgr = cv2.cvtColor(hsv_enhanced, cv2.COLOR_HSV2BGR)
+        # hsv = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2HSV)
+        # h_channel, s_channel, v_channel = cv2.split(hsv)
+        # s_boosted = cv2.multiply(s_channel, 1.3)
+        # hsv_enhanced = cv2.merge((h_channel, s_boosted, v_channel))
+        # enhanced_bgr = cv2.cvtColor(hsv_enhanced, cv2.COLOR_HSV2BGR)
 
-        dimmed = cv2.convertScaleAbs(enhanced_bgr, alpha=0.9, beta=-15)
-        boosted = cv2.convertScaleAbs(dimmed, alpha=1, beta=0)
+        # dimmed = cv2.convertScaleAbs(enhanced_bgr, alpha=0.9, beta=-15)
+        # boosted = cv2.convertScaleAbs(dimmed, alpha=1, beta=0)
 
-        blurred = cv2.GaussianBlur(boosted, (0, 0), 1.0)
-        sharpened = cv2.addWeighted(boosted, 1.6, blurred, -0.6, 0)
-        return sharpened.astype("uint8")
+        # blurred = cv2.GaussianBlur(boosted, (0, 0), 1.0)
+        # sharpened = cv2.addWeighted(boosted, 1.6, blurred, -0.6, 0)
+        # return sharpened.astype("uint8")
+        return image.copy()
     except Exception:
         return None
+
+
+def decode_image_from_jpeg_bytes(jpeg_bytes: bytes) -> Optional[np.ndarray]:
+    try:
+        nparr = np.frombuffer(jpeg_bytes, np.uint8)
+        img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        return img
+    except Exception:
+        return None
+
