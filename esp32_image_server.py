@@ -20,7 +20,7 @@ SAVE_FOLDER = Path("./captured_images")
 SAVE_FOLDER.mkdir(exist_ok=True)
 
 HOST = "0.0.0.0"
-PORT = 8001
+PORT = 8002
 
 # ================= FASTAPI =================
 app = FastAPI(title="ESP32 Image Receiver")
