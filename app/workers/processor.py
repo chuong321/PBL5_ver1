@@ -76,7 +76,7 @@ class PrimaryProcessor(mp.Process):
         return {
             "battery": 0,
             "dangerous": 1,
-            "Electronic": 2,
+            "electronic": 2,
             "light": 3,
             "lighter": 4,
             "medicine": 5,
@@ -190,19 +190,25 @@ class PrimaryProcessor(mp.Process):
                     detections = []
                     for box, cid, conf in zip(boxes, class_ids, confidences):
                         x1, y1, x2, y2 = box
+                        detected_label = self._normalize_label(
+                            self._get_model_label(int(cid))
+                        )
                         detections.append(
                             {
                                 "x": int(x1),
                                 "y": int(y1),
                                 "width": int(x2 - x1),
                                 "height": int(y2 - y1),
-                                "label": self._get_model_label(int(cid)),
+                                "label": detected_label,
                                 "confidence": float(conf),
                             }
                         )
 
                     all_detections = [
-                        (self._get_model_label(int(cid)), float(conf))
+                        (
+                            self._normalize_label(self._get_model_label(int(cid))),
+                            float(conf),
+                        )
                         for cid, conf in zip(class_ids.tolist(), confidences.tolist())
                     ]
                     self.logger.info(
@@ -216,7 +222,7 @@ class PrimaryProcessor(mp.Process):
                     class_id = int(class_ids[max_idx])
                     box = boxes[max_idx]
 
-                    label = self._get_model_label(class_id)
+                    label = self._normalize_label(self._get_model_label(class_id))
                     custom_class_id = self.custom_label_to_index.get(label)
 
                     self.logger.info(
@@ -269,6 +275,11 @@ class PrimaryProcessor(mp.Process):
             if 0 <= class_id < len(self.model_names):
                 return self.model_names[class_id]
         return f"unknown_{class_id}"
+
+    def _normalize_label(self, label: str) -> str:
+        if not label:
+            return label
+        return label.strip().lower().replace(" ", "_").replace("-", "_")
 
     def run(self) -> None:
         """Main loop cua PRIMARY process."""
@@ -454,8 +465,16 @@ class SecondaryProcessor(mp.Process):
             Tuple: ('yes'/'no', final_confidence)
         """
 
+        if label == "plastic_bottle":
+            threshold_key = "plastic_bottle"
+        elif "glass" in label.lower():
+            threshold_key = "glass"
+        elif "bottle" in label.lower():
+            threshold_key = "plastic_bottle"
+        else:
+            threshold_key = "default"
         weight_threshold = WEIGHT_THRESHOLD.get(
-            "bottle" if "bottle" in label.lower() else "default"
+            threshold_key, WEIGHT_THRESHOLD.get("default", 0)
         )
 
         if weight_grams is None:
@@ -484,7 +503,7 @@ class SecondaryProcessor(mp.Process):
 
         if 0 <= class_id <= 7:
             return (1, "hazardous")
-        if 8 <= class_id <= 16:
+        if 8 <= class_id <= 17:  # 8-16: recyclable, 17: plastic_bottle (cũng recyclable)
             return (2, "recyclable")
         if 18 <= class_id <= 21:
             return (3, "organic")

@@ -143,6 +143,36 @@
                         <div class="stat-label">Loại rác phát hiện</div>
                         <div class="stat-value" id="stat-labels">0</div>
                     </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Carbon footprint</div>
+                        <div class="stat-value" id="stat-carbon">0 kg</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Carbon Footprint -->
+            <div class="card">
+                <h2>🌱 Carbon Footprint ước tính</h2>
+                <div class="stat-grid">
+                    <div class="stat-item">
+                        <div class="stat-label">Tổng phát thải</div>
+                        <div class="stat-value" id="stat-carbon-total">0 kg CO₂e</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">24 giờ gần đây</div>
+                        <div class="stat-value" id="stat-carbon-24h">0 kg CO₂e</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Khối lượng đã đo</div>
+                        <div class="stat-value" id="stat-carbon-weight">0 kg</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-label">Đóng góp cao nhất</div>
+                        <div class="stat-value" id="stat-carbon-top-label">-</div>
+                    </div>
+                </div>
+                <div class="info-box" style="margin-top: 15px;">
+                    <p>Chỉ số được ước tính từ loại rác AI nhận diện, trọng lượng ESP32 gửi lên và hệ số phát thải kg CO₂e/kg theo từng nhóm vật liệu.</p>
                 </div>
             </div>
 
@@ -460,6 +490,29 @@
         }
 
         // ===== API CALLS =====
+        function formatCarbonValue(value) {
+            const amount = Number(value || 0);
+            if (!Number.isFinite(amount)) {
+                return '0 kg CO₂e';
+            }
+
+            if (amount >= 1000) {
+                return (amount / 1000).toFixed(2) + ' t CO₂e';
+            }
+
+            return amount.toFixed(3) + ' kg CO₂e';
+        }
+
+        function getTopCarbonLabel(carbonByLabel) {
+            const entries = Object.entries(carbonByLabel || {});
+            if (entries.length === 0) {
+                return '-';
+            }
+
+            const [label, value] = entries.sort((a, b) => b[1] - a[1])[0];
+            return `${label} (${formatCarbonValue(value)})`;
+        }
+
         async function loadStats() {
             try {
                 const response = await fetch(`${API_BASE}/api/stats`);
@@ -471,6 +524,16 @@
                 document.getElementById('stat-24h').textContent = data.recent_24h;
                 document.getElementById('stat-labels').textContent = 
                     Object.keys(data.total_by_label).length;
+                document.getElementById('stat-carbon').textContent = 
+                    formatCarbonValue(data.carbon_footprint_kg_co2e);
+                document.getElementById('stat-carbon-total').textContent = 
+                    formatCarbonValue(data.carbon_footprint_kg_co2e);
+                document.getElementById('stat-carbon-24h').textContent = 
+                    formatCarbonValue(data.carbon_footprint_24h_kg_co2e);
+                document.getElementById('stat-carbon-weight').textContent = 
+                    Number(data.total_weight_kg || 0).toFixed(3) + ' kg';
+                document.getElementById('stat-carbon-top-label').textContent = 
+                    getTopCarbonLabel(data.carbon_footprint_by_label);
             } catch (error) {
                 console.error('Error loading stats:', error);
             }

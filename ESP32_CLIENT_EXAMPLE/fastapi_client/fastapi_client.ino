@@ -10,20 +10,20 @@ const char* ssid = "TAN TIEN T2";
 const char* password = "86868686";
 
 // ================= WEBSOCKET =================
-const char* ws_host = "192.168.1.4";
+const char* ws_host = "192.168.1.2";
 const uint16_t ws_port = 8000;
 const char* ws_path = "/ws";
 
 WebSocketsClient webSocket;
 
 // ================= HX711 =================
-#define DT 14
-#define SCK 13
+#define DT 13
+#define SCK 14
 
 HX711 scale;
 
 long offset = 110060;
-float calibration = 81;
+float calibration = 123.4;
 
 // ================= CAMERA PINS (AI THINKER) =================
 #define PWDN_GPIO_NUM     32
@@ -77,7 +77,7 @@ void initCamera() {
 
   config.pixel_format = PIXFORMAT_JPEG;
 
-  config.frame_size = FRAMESIZE_VGA;
+  config.frame_size = FRAMESIZE_QVGA;
 
   config.jpeg_quality = 20;
 
@@ -129,9 +129,9 @@ float readWeight() {
     return 0;
   }
 
-  long raw = scale.read_average(10);
+  long raw = scale.get_value();
 
-  float weight = (raw - offset) / calibration -35;
+  float weight = raw / calibration - 35;
 
   if (weight < 0)
     weight = 0;

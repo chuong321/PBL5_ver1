@@ -3,21 +3,56 @@
 import asyncio
 import json
 from datetime import datetime
+from typing import Optional
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.services.esp32_service import (
     manager,
+    servo_manager,
     mark_esp32_seen,
     mark_esp32_disconnected,
     read_esp32_state,
     decode_image_from_base64,
-    decode_image_from_jpeg_bytes,
+    preprocess_esp32_image,
 )
 from app.workers.processor import get_orchestrator
 
 router = APIRouter()
 
 
+def extract_weight_grams(data: dict) -> Optional[float]:
+    weight_grams = data.get("weight_grams", data.get("weight"))
+    payload = data.get("data")
+    if weight_grams is None and isinstance(payload, dict):
+        weight_grams = payload.get("weight_grams", payload.get("weight"))
+    if weight_grams is None:
+        return None
+    try:
+        return float(weight_grams)
+    except (TypeError, ValueError):
+        return None
+
+
+async def submit_image_with_weight(
+    websocket: WebSocket,
+    processed_image,
+    weight_grams: float,
+) -> None:
+    batch_id = await websocket.app.state.batch_id_generator.next_id()
+    orchestrator = get_orchestrator()
+    result = orchestrator.submit_batch(batch_id, [processed_image], [weight_grams])
+    if result != -1:
+        await websocket.send_json({
+            "type": "batch_submitted",
+            "batch_id": batch_id,
+            "weight_grams": weight_grams,
+            "message": "Processing 1 image...",
+        })
+
+
+# ============================================================
+# Endpoint: /ws  — ESP32-CAM sends image + weight
+# ============================================================
 @router.get("/api/esp32/status")
 async def get_esp32_status():
     connected, last_seen, age_seconds, latest_weight_grams = await read_esp32_state()
@@ -31,14 +66,11 @@ async def get_esp32_status():
 
 @router.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    """ESP32-CAM connects here to send image frames + weight readings."""
     await manager.connect(websocket)
-
-    expecting_image_bytes = False
-    pending_weight_grams = 50.0
     ping_task: asyncio.Task | None = None
 
     async def _keepalive() -> None:
-        # App-level keepalive helps avoid idle timeouts through routers/NAT.
         while True:
             await asyncio.sleep(20)
             try:
@@ -54,40 +86,6 @@ async def websocket_endpoint(websocket: WebSocket):
             if message.get("type") == "websocket.disconnect":
                 break
 
-            if message.get("type") == "websocket.receive" and "bytes" in message:
-                if not expecting_image_bytes:
-                    continue
-
-                jpeg_bytes = message.get("bytes") or b""
-                expecting_image_bytes = False
-
-                await mark_esp32_seen(weight_grams=pending_weight_grams)
-                await manager.broadcast(
-                    {
-                        "type": "sensor_data",
-                        "data": {"weight_grams": float(pending_weight_grams)},
-                    }
-                )
-
-                image = decode_image_from_jpeg_bytes(jpeg_bytes)
-                if image is None:
-                    await websocket.send_json({"type": "error", "message": "Invalid image bytes"})
-                    continue
-
-                batch_id = await websocket.app.state.batch_id_generator.next_id()
-                orchestrator = get_orchestrator()
-                result = orchestrator.submit_batch(batch_id, [image], [pending_weight_grams])
-
-                if result != -1:
-                    await websocket.send_json(
-                        {
-                            "type": "batch_submitted",
-                            "batch_id": batch_id,
-                            "message": "Processing 1 image...",
-                        }
-                    )
-                continue
-
             if message.get("type") != "websocket.receive" or "text" not in message:
                 continue
 
@@ -99,53 +97,29 @@ async def websocket_endpoint(websocket: WebSocket):
 
                 if msg_type == "image":
                     base64_image = data.get("data", "")
-                    weight_grams = data.get("weight_grams", 50.0)
+                    weight_grams = extract_weight_grams(data)
+
                     await mark_esp32_seen(weight_grams=weight_grams)
-                    await manager.broadcast(
-                        {
-                            "type": "sensor_data",
-                            "data": {"weight_grams": float(weight_grams)},
-                        }
-                    )
-                    await manager.broadcast(
-                        {
-                            "type": "frame",
-                            "data": f"data:image/jpeg;base64,{base64_image}",
-                            "detections": [],
-                        }
-                    )
+
+                    await manager.broadcast({
+                        "type": "frame",
+                        "data": f"data:image/jpeg;base64,{base64_image}",
+                        "detections": [],
+                    })
+                    await manager.broadcast({
+                        "type": "sensor_data",
+                        "data": {"weight_grams": weight_grams},
+                    })
 
                     image = decode_image_from_base64(base64_image)
                     if image is None:
-                        await websocket.send_json({"type": "error", "message": "Invalid image"})
                         continue
 
-                    batch_id = await websocket.app.state.batch_id_generator.next_id()
-                    orchestrator = get_orchestrator()
-                    result = orchestrator.submit_batch(batch_id, [image], [weight_grams])
+                    processed_image = await asyncio.to_thread(preprocess_esp32_image, image)
+                    if processed_image is None:
+                        continue
 
-                    if result != -1:
-                        await websocket.send_json(
-                            {
-                                "type": "batch_submitted",
-                                "batch_id": batch_id,
-                                "message": "Processing 1 image...",
-                            }
-                        )
-
-                elif msg_type == "image_bin":
-                    pending_weight_grams = float(data.get("weight_grams", 50.0))
-                    expecting_image_bytes = True
-
-                elif msg_type == "weight_update":
-                    weight_grams = float(data.get("weight_grams", 0.0))
-                    await mark_esp32_seen(weight_grams=weight_grams)
-                    await manager.broadcast(
-                        {
-                            "type": "sensor_data",
-                            "data": {"weight_grams": weight_grams},
-                        }
-                    )
+                    await submit_image_with_weight(websocket, processed_image, weight_grams)
 
                 elif msg_type == "ping":
                     await mark_esp32_seen()
@@ -163,3 +137,57 @@ async def websocket_endpoint(websocket: WebSocket):
             ping_task.cancel()
         await mark_esp32_disconnected()
         await manager.disconnect(websocket)
+
+
+# ============================================================
+# Endpoint: /ws/servo  — ESP8266-SERVO connects here to receive commands
+# ============================================================
+@router.websocket("/ws/servo")
+async def servo_websocket_endpoint(websocket: WebSocket):
+    """ESP8266-SERVO connects here to receive servo commands."""
+    await servo_manager.connect(websocket)
+
+    async def _keepalive() -> None:
+        while True:
+            await asyncio.sleep(20)
+            try:
+                await websocket.send_json({"type": "ping", "timestamp": datetime.utcnow().isoformat()})
+            except Exception:
+                return
+
+    ping_task: asyncio.Task | None = None
+    try:
+        ping_task = asyncio.create_task(_keepalive())
+
+        # Gui thong bao ready
+        await websocket.send_json({"type": "connected", "message": "Servo controller connected"})
+
+        while True:
+            message = await websocket.receive()
+
+            if message.get("type") == "websocket.disconnect":
+                break
+
+            if message.get("type") != "websocket.receive" or "text" not in message:
+                continue
+
+            text = message.get("text") or ""
+            try:
+                data = json.loads(text)
+                msg_type = data.get("type", "")
+
+                if msg_type in {"servo_ready", "servo_ack", "servo_status", "pong"}:
+                    # Phan hoi tu ESP8266-SERVO - chi log, khong xu ly gi
+                    print(f"[SERVO WS] {msg_type}: {data}")
+                elif msg_type == "ping":
+                    await websocket.send_json({"type": "pong", "timestamp": datetime.utcnow().isoformat()})
+            except json.JSONDecodeError:
+                pass
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        if ping_task:
+            ping_task.cancel()
+        await servo_manager.disconnect(websocket)
