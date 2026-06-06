@@ -42,16 +42,27 @@ async def submit_image_with_weight(
     orchestrator = get_orchestrator()
     result = orchestrator.submit_batch(batch_id, [processed_image], [weight_grams])
     if result != -1:
-        await websocket.send_json({
-            "type": "batch_submitted",
-            "batch_id": batch_id,
-            "weight_grams": weight_grams,
-            "message": "Processing 1 image...",
-        })
+        await websocket.send_json(
+            {
+                "type": "batch_submitted",
+                "batch_id": batch_id,
+                "weight_grams": weight_grams,
+                "message": "Processing 1 image...",
+            }
+        )
+
+
+async def broadcast_weight(weight_grams: float) -> None:
+    await manager.broadcast(
+        {
+            "type": "sensor_data",
+            "data": {"weight_grams": weight_grams},
+        }
+    )
 
 
 # ============================================================
-# Endpoint: /ws  — ESP32-CAM sends image + weight
+# Endpoint: /ws  - ESP32-CAM sends image + weight
 # ============================================================
 @router.get("/api/esp32/status")
 async def get_esp32_status():
@@ -68,13 +79,16 @@ async def get_esp32_status():
 async def websocket_endpoint(websocket: WebSocket):
     """ESP32-CAM connects here to send image frames + weight readings."""
     await manager.connect(websocket)
+    pending_image = None
     ping_task: asyncio.Task | None = None
 
     async def _keepalive() -> None:
         while True:
             await asyncio.sleep(20)
             try:
-                await websocket.send_json({"type": "ping", "timestamp": datetime.utcnow().isoformat()})
+                await websocket.send_json(
+                    {"type": "ping", "timestamp": datetime.utcnow().isoformat()}
+                )
             except Exception:
                 return
 
@@ -100,26 +114,64 @@ async def websocket_endpoint(websocket: WebSocket):
                     weight_grams = extract_weight_grams(data)
 
                     await mark_esp32_seen(weight_grams=weight_grams)
-
-                    await manager.broadcast({
-                        "type": "frame",
-                        "data": f"data:image/jpeg;base64,{base64_image}",
-                        "detections": [],
-                    })
-                    await manager.broadcast({
-                        "type": "sensor_data",
-                        "data": {"weight_grams": weight_grams},
-                    })
+                    await manager.broadcast(
+                        {
+                            "type": "frame",
+                            "data": f"data:image/jpeg;base64,{base64_image}",
+                            "detections": [],
+                        }
+                    )
 
                     image = decode_image_from_base64(base64_image)
-                    if image is None:
-                        continue
-
-                    processed_image = await asyncio.to_thread(preprocess_esp32_image, image)
+                    processed_image = await asyncio.to_thread(
+                        preprocess_esp32_image, image
+                    )
                     if processed_image is None:
+                        await websocket.send_json(
+                            {"type": "error", "message": "Invalid image"}
+                        )
                         continue
 
-                    await submit_image_with_weight(websocket, processed_image, weight_grams)
+                    if pending_image is not None:
+                        await websocket.send_json(
+                            {
+                                "type": "warning",
+                                "message": "Previous image discarded because no weight arrived.",
+                            }
+                        )
+                        pending_image = None
+
+                    if weight_grams is not None:
+                        await broadcast_weight(weight_grams)
+                        await submit_image_with_weight(
+                            websocket, processed_image, weight_grams
+                        )
+                    else:
+                        pending_image = processed_image
+                        await websocket.send_json(
+                            {
+                                "type": "image_received",
+                                "message": "Image received. Waiting for next weight sample...",
+                            }
+                        )
+
+                elif msg_type in {"weight", "sensor_data"}:
+                    weight_grams = extract_weight_grams(data)
+                    if weight_grams is None:
+                        await websocket.send_json(
+                            {"type": "error", "message": "Invalid weight"}
+                        )
+                        continue
+
+                    await mark_esp32_seen(weight_grams=weight_grams)
+                    await broadcast_weight(weight_grams)
+
+                    if pending_image is not None:
+                        image_to_submit = pending_image
+                        pending_image = None
+                        await submit_image_with_weight(
+                            websocket, image_to_submit, weight_grams
+                        )
 
                 elif msg_type == "ping":
                     await mark_esp32_seen()
@@ -140,7 +192,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
 
 # ============================================================
-# Endpoint: /ws/servo  — ESP8266-SERVO connects here to receive commands
+# Endpoint: /ws/servo  - ESP8266-SERVO connects here to receive commands
 # ============================================================
 @router.websocket("/ws/servo")
 async def servo_websocket_endpoint(websocket: WebSocket):
@@ -151,7 +203,9 @@ async def servo_websocket_endpoint(websocket: WebSocket):
         while True:
             await asyncio.sleep(20)
             try:
-                await websocket.send_json({"type": "ping", "timestamp": datetime.utcnow().isoformat()})
+                await websocket.send_json(
+                    {"type": "ping", "timestamp": datetime.utcnow().isoformat()}
+                )
             except Exception:
                 return
 
@@ -160,7 +214,9 @@ async def servo_websocket_endpoint(websocket: WebSocket):
         ping_task = asyncio.create_task(_keepalive())
 
         # Gui thong bao ready
-        await websocket.send_json({"type": "connected", "message": "Servo controller connected"})
+        await websocket.send_json(
+            {"type": "connected", "message": "Servo controller connected"}
+        )
 
         while True:
             message = await websocket.receive()
@@ -180,7 +236,9 @@ async def servo_websocket_endpoint(websocket: WebSocket):
                     # Phan hoi tu ESP8266-SERVO - chi log, khong xu ly gi
                     print(f"[SERVO WS] {msg_type}: {data}")
                 elif msg_type == "ping":
-                    await websocket.send_json({"type": "pong", "timestamp": datetime.utcnow().isoformat()})
+                    await websocket.send_json(
+                        {"type": "pong", "timestamp": datetime.utcnow().isoformat()}
+                    )
             except json.JSONDecodeError:
                 pass
     except WebSocketDisconnect:
