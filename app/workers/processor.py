@@ -70,6 +70,7 @@ class PrimaryProcessor(mp.Process):
         self.worker_id = worker_id
         self.yolo_model = None
         self.model_names = None
+        self.model_names = None
         self.custom_label_to_index = self._init_custom_label_to_index()
 
     def _init_custom_label_to_index(self) -> Dict[str, int]:
@@ -386,7 +387,9 @@ class SecondaryProcessor(mp.Process):
         self.result_queue = result_queue
         self.shutdown_event = shutdown_event
         self.worker_id = worker_id
+        self.logger = logging.getLogger(__name__)
         self.yolo_model = None
+        self.model_names = None
 
     def load_model(self) -> bool:
         """Load YOLO2 model."""
@@ -395,6 +398,7 @@ class SecondaryProcessor(mp.Process):
                 from ultralytics import YOLO
 
                 self.yolo_model = YOLO(MODEL_SECONDARY_PATH)
+                self.model_names = self.yolo_model.names
                 print(
                     f"[SECONDARY-{self.worker_id}] ✓ YOLO2 model loaded: {MODEL_SECONDARY_PATH}"
                 )
@@ -407,6 +411,19 @@ class SecondaryProcessor(mp.Process):
         except Exception as exc:
             print(f"[SECONDARY-{self.worker_id}] ✗ Error loading YOLO2: {exc}")
             return False
+
+    def _get_model_label(self, class_id: int) -> str:
+        if isinstance(self.model_names, dict):
+            return self.model_names.get(class_id, f"unknown_{class_id}")
+        if isinstance(self.model_names, (list, tuple)):
+            if 0 <= class_id < len(self.model_names):
+                return self.model_names[class_id]
+        return f"unknown_{class_id}"
+
+    def _normalize_label(self, label: str) -> str:
+        if not label:
+            return label
+        return label.strip().lower().replace(" ", "_").replace("-", "_")
 
     def detect_liquid(self, image: np.ndarray) -> Tuple[bool, float]:
         """
@@ -421,6 +438,7 @@ class SecondaryProcessor(mp.Process):
         try:
             if self.yolo_model is None:
                 has_liquid = bool(np.random.rand() > 0.5)
+                self.logger.info("YOLO2 dummy=%s", has_liquid)
                 return has_liquid, float(np.random.uniform(0.6, 0.95))
 
             results = self.yolo_model(
@@ -435,9 +453,37 @@ class SecondaryProcessor(mp.Process):
                 result = results[0]
 
                 if result.boxes is not None and len(result.boxes) > 0:
-                    has_liquid = True
-                    confidence = float(result.boxes.conf.cpu().numpy().max())
-                    return has_liquid, confidence
+                    confidences = result.boxes.conf.cpu().numpy()
+                    class_ids = result.boxes.cls.cpu().numpy().astype(int)
+                    all_detections = [
+                        (
+                            self._normalize_label(self._get_model_label(int(cid))),
+                            float(conf),
+                        )
+                        for cid, conf in zip(class_ids.tolist(), confidences.tolist())
+                    ]
+                    self.logger.info(
+                        "YOLO2 boxes=%s",
+                        all_detections,
+                    )
+                    liquid_confidences = [
+                        float(conf)
+                        for cid, conf in zip(class_ids.tolist(), confidences.tolist())
+                        if self._normalize_label(self._get_model_label(int(cid))) == "liquid"
+                    ]
+
+                    if liquid_confidences:
+                        self.logger.info(
+                            "YOLO2 liquid=%.2f",
+                            max(liquid_confidences),
+                        )
+                        return True, max(liquid_confidences)
+
+                    self.logger.info(
+                        "YOLO2 liquid=none"
+                    )
+
+            self.logger.info("YOLO2 boxes=[]")
 
             return False, 0.0
 
@@ -571,18 +617,24 @@ class SecondaryProcessor(mp.Process):
                         has_liquid, liquid_conf = self.determine_has_liquid(
                             model_detected, model_conf, label, weight_grams
                         )
+                        self.logger.info(
+                            "YOLO2 final label=%s weight=%s detected=%s final=%s conf=%.2f",
+                            label,
+                            weight_grams,
+                            model_detected,
+                            has_liquid,
+                            liquid_conf,
+                        )
 
                         if has_liquid == "yes":
-                            final_label = "liquid"
                             group_id, group_name = (4, "mixed")
                         else:
-                            final_label = label
                             group_id, group_name = (2, "recyclable")
 
                         final_result = {
                             "batch_id": batch_id,
                             "image_idx": primary_result["image_idx"],
-                            "label": final_label,
+                            "label": label,
                             "confidence": primary_result["confidence"],
                             "has_liquid": has_liquid,
                             "liquid_confidence": liquid_conf,

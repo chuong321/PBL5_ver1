@@ -132,15 +132,17 @@
 2. Receive crop_image from intermediate_queue (from PRIMARY)
 3. Run inference on crop (conf=0.5, imgsz=320)
 4. Determine: has_liquid (bool), liquid_confidence (float)
+   - Chỉ xem là phát hiện chất lỏng khi YOLO2 có ít nhất 1 detection với class `liquid`
+   - Detection class khác `liquid` không được tính là phát hiện chất lỏng
 
 **Smart Logic (4 Cases):**
 
 | Model Output | Weight | Decision | Rationale |
 |---|---|---|---|
-| has_liquid=YES | > threshold | **YES** | Clear detection |
+| has_liquid=YES | > threshold | **YES** | Detect class `liquid` |
 | has_liquid=NO | <= threshold | **NO** | Sure it's empty |
 | has_liquid=NO | > threshold | **YES** | Water filled bottle, label hidden |
-| has_liquid=YES | < threshold | **YES** | Wrong threshold, trust AI |
+| has_liquid=YES | < threshold | **YES** | Detect class `liquid`, trust AI |
 
 **Example:**
 ```python
