@@ -179,6 +179,17 @@ void setup() {
   restServo1();
   rotateServo2(SERVO2_POS_1);
   Serial.println("Servo OK");
+
+  // TEST servo2 quay 0→90→180
+  Serial.println("TEST SERVO2...");
+  servo2.write(0);
+  delay(500);
+  servo2.write(90);
+  delay(500);
+  servo2.write(180);
+  delay(500);
+  servo2.write(currentAngle);
+  Serial.println("TEST DONE");
   
   // WIFI
   WiFi.begin(ssid, password);
