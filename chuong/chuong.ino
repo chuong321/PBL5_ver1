@@ -77,9 +77,9 @@ void initCamera() {
 
   config.pixel_format = PIXFORMAT_JPEG;
 
-  config.frame_size = FRAMESIZE_VGA;
+  config.frame_size = FRAMESIZE_QVGA;
 
-  config.jpeg_quality = 20;
+  config.jpeg_quality = 10;
 
   config.fb_count = 1;
 
@@ -167,23 +167,25 @@ void sendImage() {
 
   String imageBase64 = base64::encode(fb->buf, fb->len);
 
-  // ========= JSON =========
-
-  DynamicJsonDocument doc(1024);
-
-  doc["type"] = "image";
-
-  doc["data"] = imageBase64;
-
-  doc["weight_grams"] = weight;
-
   String jsonString;
 
-  serializeJson(doc, jsonString);
+  jsonString.reserve(imageBase64.length() + 80);
+  jsonString = "{\"type\":\"image\",\"data\":\"";
+  jsonString += imageBase64;
+  jsonString += "\",\"weight_grams\":";
+  jsonString += String(weight, 1);
+  jsonString += "}";
 
   // ========= SEND =========
 
   webSocket.sendTXT(jsonString);
+
+  Serial.print("Captured bytes: ");
+  Serial.print(fb->len);
+  Serial.print(" | Base64 chars: ");
+  Serial.print(imageBase64.length());
+  Serial.print(" | JSON chars: ");
+  Serial.println(jsonString.length());
 
   Serial.print("Image sent | Weight: ");
   Serial.print(weight, 1);

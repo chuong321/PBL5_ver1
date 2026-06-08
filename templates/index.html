@@ -272,6 +272,18 @@
         let eventLog = [];
         const MAX_LOG_ITEMS = 5;
         let lastFrameData = null;
+        const framesByBatchId = new Map();
+        const MAX_FRAME_CACHE = 20;
+
+        function rememberFrame(batchId, imageData) {
+            if (batchId === undefined || batchId === null) return;
+
+            framesByBatchId.set(String(batchId), imageData);
+            while (framesByBatchId.size > MAX_FRAME_CACHE) {
+                const oldestKey = framesByBatchId.keys().next().value;
+                framesByBatchId.delete(oldestKey);
+            }
+        }
 
         // ===== STYLE FOR STATUS INDICATOR =====
         const style = document.createElement('style');
@@ -472,6 +484,7 @@
             if (message.type === 'frame') {
                 // Display video frame with detections
                 lastFrameData = message.data;
+                rememberFrame(message.batch_id, message.data);
                 drawBoundingBoxes(message.data, message.detections || []);
             } else if (message.type === 'sensor_data') {
                 updateSensors(message.data);
@@ -481,8 +494,14 @@
                 if (message.data.results && message.data.results.length > 0) {
                     const result = message.data.results[0];
                     updateAIResult(result);
-                    if (lastFrameData && result.detections && result.detections.length > 0) {
-                        drawBoundingBoxes(lastFrameData, result.detections);
+                    const resultBatchId = message.data.batch_id;
+                    const resultFrameData =
+                        resultBatchId !== undefined && resultBatchId !== null
+                            ? framesByBatchId.get(String(resultBatchId))
+                            : null;
+                    const frameData = resultFrameData || lastFrameData;
+                    if (frameData && result.detections && result.detections.length > 0) {
+                        drawBoundingBoxes(frameData, result.detections);
                     }
                 }
                 loadStats();

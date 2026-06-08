@@ -37,8 +37,11 @@ async def submit_image_with_weight(
     websocket: WebSocket,
     processed_image,
     weight_grams: float,
+    batch_id: Optional[int] = None,
 ) -> None:
-    batch_id = await websocket.app.state.batch_id_generator.next_id()
+    if batch_id is None:
+        batch_id = await websocket.app.state.batch_id_generator.next_id()
+
     orchestrator = get_orchestrator()
     result = orchestrator.submit_batch(batch_id, [processed_image], [weight_grams])
     if result != -1:
@@ -80,6 +83,7 @@ async def websocket_endpoint(websocket: WebSocket):
     """ESP32-CAM connects here to send image frames + weight readings."""
     await manager.connect(websocket)
     pending_image = None
+    pending_batch_id = None
     ping_task: asyncio.Task | None = None
 
     async def _keepalive() -> None:
@@ -112,11 +116,13 @@ async def websocket_endpoint(websocket: WebSocket):
                 if msg_type == "image":
                     base64_image = data.get("data", "")
                     weight_grams = extract_weight_grams(data)
+                    batch_id = await websocket.app.state.batch_id_generator.next_id()
 
                     await mark_esp32_seen(weight_grams=weight_grams)
                     await manager.broadcast(
                         {
                             "type": "frame",
+                            "batch_id": batch_id,
                             "data": f"data:image/jpeg;base64,{base64_image}",
                             "detections": [],
                         }
@@ -140,14 +146,16 @@ async def websocket_endpoint(websocket: WebSocket):
                             }
                         )
                         pending_image = None
+                        pending_batch_id = None
 
                     if weight_grams is not None:
                         await broadcast_weight(weight_grams)
                         await submit_image_with_weight(
-                            websocket, processed_image, weight_grams
+                            websocket, processed_image, weight_grams, batch_id
                         )
                     else:
                         pending_image = processed_image
+                        pending_batch_id = batch_id
                         await websocket.send_json(
                             {
                                 "type": "image_received",
@@ -168,9 +176,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
                     if pending_image is not None:
                         image_to_submit = pending_image
+                        batch_id_to_submit = pending_batch_id
                         pending_image = None
+                        pending_batch_id = None
                         await submit_image_with_weight(
-                            websocket, image_to_submit, weight_grams
+                            websocket, image_to_submit, weight_grams, batch_id_to_submit
                         )
 
                 elif msg_type == "ping":

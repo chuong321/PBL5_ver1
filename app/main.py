@@ -1,6 +1,7 @@
 """FastAPI application entry point."""
 
 import asyncio
+import base64
 import json
 from datetime import datetime
 from typing import Optional
@@ -16,6 +17,7 @@ from app.core.config import (
     CORS_ALLOW_METHODS,
     CORS_ALLOW_HEADERS,
     STATIC_DIR,
+    UPLOAD_FOLDER,
     SQLALCHEMY_DATABASE_URI,
 )
 from app.models.trash_record import init_db, get_session_factory
@@ -63,43 +65,45 @@ async def process_batches_background(app: FastAPI) -> None:
                         group_name = res.get("group_name")
                         output_code = group_id if group_id is not None else 0
 
-                        record = TrashRepository.create_record(
-                            db_session=session,
-                            image_path=f"batch_{batch_id}_image_{idx}.jpg",
-                            label=label,
-                            confidence=confidence,
-                            has_liquid=has_liquid,
-                            weight_grams=weight_grams,
-                            individual_confidences=json.dumps(
-                                {"primary_conf": confidence, "liquid_conf": liquid_conf}
-                            ),
-                            primary_model_output=label,
-                            secondary_model_output=f"liquid={has_liquid}",
+                        response_data["results"].append(
+                            {
+                                "image_idx": idx,
+                                "label": label,
+                                "confidence": confidence,
+                                "has_liquid": has_liquid,
+                                "weight_grams": weight_grams,
+                                "detections": detections,
+                                "image_shape": image_shape,
+                                "group_id": group_id,
+                                "group_name": group_name,
+                                "output_code": output_code,
+                            }
                         )
 
-                        if record is not None:
-                            response_data["results"].append(
-                                {
-                                    "image_idx": idx,
-                                    "label": label,
-                                    "confidence": confidence,
-                                    "has_liquid": has_liquid,
-                                    "weight_grams": weight_grams,
-                                    "detections": detections,
-                                    "image_shape": image_shape,
-                                    "group_id": group_id,
-                                    "group_name": group_name,
-                                    "output_code": output_code,
-                                }
+                        try:
+                            TrashRepository.create_record(
+                                db_session=session,
+                                image_path=f"batch_{batch_id}_image_{idx}.jpg",
+                                label=label,
+                                confidence=confidence,
+                                has_liquid=has_liquid,
+                                weight_grams=weight_grams,
+                                individual_confidences=json.dumps(
+                                    {"primary_conf": confidence, "liquid_conf": liquid_conf}
+                                ),
+                                primary_model_output=label,
+                                secondary_model_output=f"liquid={has_liquid}",
                             )
+                        except Exception as exc:
+                            print(f"[MAIN] Failed to save trash record for batch #{batch_id}: {exc}")
 
-                            # Gui lenh xuong ESP8266-SERVO qua WebSocket
-                            if 1 <= output_code <= 5:
-                                await servo_manager.broadcast({
-                                    "type": "servo_command",
-                                    "output_code": output_code,
-                                })
-                                print(f"[MAIN] Sent servo_command C{output_code} to ESP8266")
+                        # Gui lenh xuong ESP8266-SERVO qua WebSocket
+                        if 1 <= output_code <= 5:
+                            await servo_manager.broadcast({
+                                "type": "servo_command",
+                                "output_code": output_code,
+                            })
+                            print(f"[MAIN] Sent servo_command C{output_code} to ESP8266")
 
                     session.close()
                 except Exception:
@@ -117,6 +121,31 @@ app = FastAPI(
     description="Real-time Trash Classification with FastAPI + Multiprocessing",
     version="2.0.0",
 )
+
+RAW_DEBUG_DIR = UPLOAD_FOLDER / "esp32_raw_debug"
+
+
+def save_first_raw_esp32_frame(app: FastAPI, base64_image: str) -> Optional[str]:
+    if getattr(app.state, "raw_esp32_frame_saved", False):
+        return None
+
+    try:
+        if "," in base64_image:
+            base64_image = base64_image.split(",", 1)[1]
+
+        image_bytes = base64.b64decode(base64_image)
+        RAW_DEBUG_DIR.mkdir(parents=True, exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        image_path = RAW_DEBUG_DIR / f"esp32_raw_before_ai_{timestamp}.jpg"
+        image_path.write_bytes(image_bytes)
+
+        app.state.raw_esp32_frame_saved = True
+        print(f"[DEBUG] Saved raw ESP32 frame before AI: {image_path}")
+        return str(image_path)
+    except Exception as exc:
+        print(f"[DEBUG] Failed to save raw ESP32 frame: {exc}")
+        return None
 
 
 # ============================================================
@@ -162,9 +191,19 @@ async def websocket_esp32(websocket: WebSocket):
                     weight_grams = float(weight_grams_data) if weight_grams_data is not None else None
 
                     await mark_esp32_seen(weight_grams=weight_grams)
+                    debug_image_path = save_first_raw_esp32_frame(websocket.app, base64_image)
+                    if debug_image_path:
+                        await websocket.send_json({
+                            "type": "debug_image_saved",
+                            "path": debug_image_path,
+                            "message": "Saved raw ESP32 frame before AI",
+                        })
+
+                    batch_id = await websocket.app.state.batch_id_generator.next_id()
 
                     await manager.broadcast({
                         "type": "frame",
+                        "batch_id": batch_id,
                         "data": f"data:image/jpeg;base64,{base64_image}",
                         "detections": [],
                     })
@@ -181,7 +220,6 @@ async def websocket_esp32(websocket: WebSocket):
                     if processed_image is None:
                         continue
 
-                    batch_id = await websocket.app.state.batch_id_generator.next_id()
                     orchestrator = get_orchestrator()
                     result = orchestrator.submit_batch(batch_id, [processed_image], [weight_grams or 0.0])
                     if result != -1:

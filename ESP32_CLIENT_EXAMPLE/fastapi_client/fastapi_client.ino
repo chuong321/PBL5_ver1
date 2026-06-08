@@ -6,11 +6,11 @@
 #include "HX711.h"
 
 // ================= WIFI =================
-const char* ssid = "TAN TIEN T2";
-const char* password = "86868686";
+const char* ssid = "Anh Tuan";
+const char* password = "0989155116";
 
 // ================= WEBSOCKET =================
-const char* ws_host = "192.168.1.2";
+const char* ws_host = "192.168.1.184";
 const uint16_t ws_port = 8000;
 const char* ws_path = "/ws";
 
@@ -79,7 +79,7 @@ void initCamera() {
 
   config.frame_size = FRAMESIZE_QVGA;
 
-  config.jpeg_quality = 20;
+  config.jpeg_quality = 10;
 
   config.fb_count = 1;
 
