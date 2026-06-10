@@ -36,6 +36,11 @@ from app.workers.processor import start_orchestrator, stop_orchestrator, get_orc
 from app.api.routes import dashboard_router, stats_router
 
 
+def should_save_trash_record(label: str, detections: list) -> bool:
+    """Only real detections should appear in history."""
+    return label not in {"no_detection", "error"} and bool(detections)
+
+
 async def process_batches_background(app: FastAPI) -> None:
     orchestrator = get_orchestrator()
 
@@ -80,22 +85,23 @@ async def process_batches_background(app: FastAPI) -> None:
                             }
                         )
 
-                        try:
-                            TrashRepository.create_record(
-                                db_session=session,
-                                image_path=f"batch_{batch_id}_image_{idx}.jpg",
-                                label=label,
-                                confidence=confidence,
-                                has_liquid=has_liquid,
-                                weight_grams=weight_grams,
-                                individual_confidences=json.dumps(
-                                    {"primary_conf": confidence, "liquid_conf": liquid_conf}
-                                ),
-                                primary_model_output=label,
-                                secondary_model_output=f"liquid={has_liquid}",
-                            )
-                        except Exception as exc:
-                            print(f"[MAIN] Failed to save trash record for batch #{batch_id}: {exc}")
+                        if should_save_trash_record(label, detections):
+                            try:
+                                TrashRepository.create_record(
+                                    db_session=session,
+                                    image_path=f"batch_{batch_id}_image_{idx}.jpg",
+                                    label=label,
+                                    confidence=confidence,
+                                    has_liquid=has_liquid,
+                                    weight_grams=weight_grams,
+                                    individual_confidences=json.dumps(
+                                        {"primary_conf": confidence, "liquid_conf": liquid_conf}
+                                    ),
+                                    primary_model_output=label,
+                                    secondary_model_output=f"liquid={has_liquid}",
+                                )
+                            except Exception as exc:
+                                print(f"[MAIN] Failed to save trash record for batch #{batch_id}: {exc}")
 
                         # Gui lenh xuong ESP8266-SERVO qua WebSocket
                         if 1 <= output_code <= 5:

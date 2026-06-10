@@ -144,32 +144,32 @@ def preprocess_esp32_image(image: np.ndarray) -> Optional[np.ndarray]:
         return None
 
     try:
-        # resized = resize_with_padding(image, target_size=(320, 320))
-        # if resized is None:
-        #     return None
+        resized = resize_with_padding(image, target_size=(320, 320))
+        if resized is None:
+            return None
 
-        # filtered = cv2.bilateralFilter(resized, d=5, sigmaColor=35, sigmaSpace=35)
+        filtered = cv2.bilateralFilter(resized, d=5, sigmaColor=35, sigmaSpace=35)
 
-        # lab = cv2.cvtColor(filtered, cv2.COLOR_BGR2LAB)
-        # l_channel, a_channel, b_channel = cv2.split(lab)
-        # clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-        # l_enhanced = clahe.apply(l_channel)
-        # enhanced = cv2.merge((l_enhanced, a_channel, b_channel))
-        # enhanced_bgr = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
+        lab = cv2.cvtColor(filtered, cv2.COLOR_BGR2LAB)
+        l_channel, a_channel, b_channel = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        l_enhanced = clahe.apply(l_channel)
+        enhanced = cv2.merge((l_enhanced, a_channel, b_channel))
+        enhanced_bgr = cv2.cvtColor(enhanced, cv2.COLOR_LAB2BGR)
 
-        # hsv = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2HSV)
-        # h_channel, s_channel, v_channel = cv2.split(hsv)
-        # s_boosted = cv2.multiply(s_channel, 1.3)
-        # hsv_enhanced = cv2.merge((h_channel, s_boosted, v_channel))
-        # enhanced_bgr = cv2.cvtColor(hsv_enhanced, cv2.COLOR_HSV2BGR)
+        hsv = cv2.cvtColor(enhanced_bgr, cv2.COLOR_BGR2HSV)
+        h_channel, s_channel, v_channel = cv2.split(hsv)
+        s_boosted = cv2.multiply(s_channel, 1.3)
+        hsv_enhanced = cv2.merge((h_channel, s_boosted, v_channel))
+        enhanced_bgr = cv2.cvtColor(hsv_enhanced, cv2.COLOR_HSV2BGR)
 
-        # dimmed = cv2.convertScaleAbs(enhanced_bgr, alpha=0.9, beta=-15)
-        # boosted = cv2.convertScaleAbs(dimmed, alpha=1, beta=0)
+        dimmed = cv2.convertScaleAbs(enhanced_bgr, alpha=0.9, beta=-15)
+        boosted = cv2.convertScaleAbs(dimmed, alpha=1, beta=0)
 
-        # blurred = cv2.GaussianBlur(boosted, (0, 0), 1.0)
-        # sharpened = cv2.addWeighted(boosted, 1.6, blurred, -0.6, 0)
-        # return sharpened.astype("uint8")
-        return image.copy()
+        blurred = cv2.GaussianBlur(boosted, (0, 0), 1.0)
+        sharpened = cv2.addWeighted(boosted, 1.6, blurred, -0.6, 0)
+        return sharpened.astype("uint8")
+        # return image.copy()
     except Exception:
         return None
 
