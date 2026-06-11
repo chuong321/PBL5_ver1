@@ -503,14 +503,33 @@
         function formatCarbonValue(value) {
             const amount = Number(value || 0);
             if (!Number.isFinite(amount)) {
-                return '0 kg CO₂e';
+                return '0 g CO₂e';
             }
 
             if (amount >= 1000) {
                 return (amount / 1000).toFixed(2) + ' t CO₂e';
             }
 
+            if (amount < 1) {
+                const grams = amount * 1000;
+                return (grams >= 10 ? grams.toFixed(1) : grams.toFixed(2)) + ' g CO₂e';
+            }
+
             return amount.toFixed(3) + ' kg CO₂e';
+        }
+
+        function formatMassValue(value) {
+            const amount = Number(value || 0);
+            if (!Number.isFinite(amount)) {
+                return '0 g';
+            }
+
+            if (amount < 1) {
+                const grams = amount * 1000;
+                return (grams >= 10 ? grams.toFixed(1) : grams.toFixed(2)) + ' g';
+            }
+
+            return amount.toFixed(3) + ' kg';
         }
 
         function getTopCarbonLabel(carbonByLabel) {
@@ -541,7 +560,7 @@
                 document.getElementById('stat-carbon-24h').textContent = 
                     formatCarbonValue(data.carbon_footprint_24h_kg_co2e);
                 document.getElementById('stat-carbon-weight').textContent = 
-                    Number(data.total_weight_kg || 0).toFixed(3) + ' kg';
+                    formatMassValue(data.total_weight_kg);
                 document.getElementById('stat-carbon-top-label').textContent = 
                     getTopCarbonLabel(data.carbon_footprint_by_label);
             } catch (error) {
